@@ -216,3 +216,11 @@ workspace/ecom/.openclaw/
 ops/army/army.env
 
 output/
+
+# coding-bot local runtime files
+coding-bot/.env
+coding-bot/.venv/
+coding-bot/__pycache__/
+coding-bot/*.egg-info/
+coding-bot/data/
+coding-bot/secrets/
