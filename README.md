@@ -167,6 +167,8 @@ curl -sS http://127.0.0.1:3900/api/v1/public/version
 ## API文档
 - 控制平面总览：`docs/rust-control-plane.md`
 - 详细设计：`docs/bot-hub-control-plane-detailed-design.md`
+- GitHub Issue 机器人方案：`docs/github机器人方案.md`
+- GitHub Issue 机器人部署手册：`docs/github机器人部署手册.md`
 - 旧单 profile 手册（归档）：`docs/archive/legacy/`
 
 ## 测试

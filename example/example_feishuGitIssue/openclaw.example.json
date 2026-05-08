@@ -1,0 +1,88 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.4.15",
+    "lastTouchedAt": "2026-05-03T00:00:00.000Z"
+  },
+  "models": {
+    "providers": {
+      "router": {
+        "baseUrl": "https://router.yeying.pub/v1",
+        "apiKey": "<fill-router-api-key>",
+        "auth": "api-key",
+        "api": "openai-responses",
+        "models": [
+          {
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "api": "openai-responses",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "router/gpt-5.4"
+      },
+      "workspace": "/root/code/bot/example/example_feishuGitIssue/.openclaw-feishu-gitissue-gpt54/workspace-larkbot",
+      "compaction": {
+        "mode": "safeguard"
+      }
+    }
+  },
+  "messages": {
+    "groupChat": {
+      "mentionPatterns": [
+        ".*"
+      ]
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "connectionMode": "websocket",
+      "appId": "cli_replace_with_feishu_app_id",
+      "appSecret": "replace_with_feishu_app_secret",
+      "groupPolicy": "allowlist",
+      "groupAllowFrom": [
+        "oc_replace_with_group_chat_id"
+      ],
+      "requireMention": true,
+      "groups": {
+        "oc_replace_with_group_chat_id": {
+          "requireMention": true
+        }
+      },
+      "mediaMaxMb": 50,
+      "historyLimit": 20,
+      "resolveSenderNames": false
+    }
+  },
+  "gateway": {
+    "port": 18890,
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "replace_with_random_gateway_token"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "feishu": {
+        "enabled": true
+      }
+    }
+  }
+}
