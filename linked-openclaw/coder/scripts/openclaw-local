@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+USER_HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+
+DEFAULT_RUNTIME_CONFIG="${APP_DIR}/data/openclaw/runtime/openclaw.runtime.json"
+DEFAULT_CONFIG="${DEFAULT_RUNTIME_CONFIG}"
+if [[ ! -f "${DEFAULT_CONFIG}" ]]; then
+  DEFAULT_CONFIG="${APP_DIR}/config/openclaw.json"
+fi
+
+DEFAULT_STATE_DIR="${APP_DIR}/data/openclaw/state"
+LEGACY_STATE_DIR="${APP_DIR}/feishu-state"
+if [[ ! -d "${DEFAULT_STATE_DIR}" && -d "${LEGACY_STATE_DIR}" ]]; then
+  DEFAULT_STATE_DIR="${LEGACY_STATE_DIR}"
+fi
+
+export OPENCLAW_RUNTIME_CONFIG_PATH="${OPENCLAW_RUNTIME_CONFIG_PATH:-${DEFAULT_RUNTIME_CONFIG}}"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${DEFAULT_CONFIG}}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${DEFAULT_STATE_DIR}}"
+export PATH="${USER_HOME}/.npm-global/bin:${USER_HOME}/.local/bin:${PATH}"
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-${APP_DIR}/data/openclaw/npm-cache}"
+export npm_config_cache="${NPM_CONFIG_CACHE}"
+
+mkdir -p "${NPM_CONFIG_CACHE}"
+
+python3 - "${APP_DIR}" "${OPENCLAW_STATE_DIR}" "${LEGACY_STATE_DIR}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+app_dir = Path(sys.argv[1])
+state_dir = Path(sys.argv[2])
+legacy_state_dir = Path(sys.argv[3])
+installs_path = state_dir / "plugins" / "installs.json"
+
+if not installs_path.exists():
+    raise SystemExit(0)
+
+# 兼容从旧 feishu-state 迁移到 data/openclaw/state 的场景。
+# OpenClaw 会把外部插件安装路径写入 installs.json，目录搬迁后如果
+# 这里还残留旧绝对路径，gateway 会误判插件未安装。
+legacy_prefix = str(legacy_state_dir.resolve())
+state_prefix = str(state_dir.resolve())
+
+if legacy_prefix == state_prefix or legacy_state_dir.exists():
+    raise SystemExit(0)
+
+text = installs_path.read_text(encoding="utf-8")
+if legacy_prefix not in text:
+    raise SystemExit(0)
+
+installs_path.write_text(text.replace(legacy_prefix, state_prefix), encoding="utf-8")
+PY
+
+OPENCLAW_REAL_BIN="${OPENCLAW_REAL_BIN:-$(command -v openclaw || true)}"
+if [[ -z "${OPENCLAW_REAL_BIN}" ]]; then
+  OPENCLAW_REAL_BIN="${USER_HOME}/.npm-global/bin/openclaw"
+fi
+
+exec "${OPENCLAW_REAL_BIN}" "$@"
