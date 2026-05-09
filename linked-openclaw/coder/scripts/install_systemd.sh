@@ -76,7 +76,7 @@ WorkingDirectory=${APP_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=CODER_BOT_ENV_FILE=${ENV_FILE}
 Environment=UV_CACHE_DIR=/tmp/coder-bot-uv-cache
-ExecStart=${UV_BIN} run --frozen gunicorn -c ${APP_DIR}/gunicorn.conf.py issue_bot_service:APP
+ExecStart=${UV_BIN} run --frozen gunicorn -c ${APP_DIR}/config/gunicorn.conf.py src.main:APP
 Restart=always
 RestartSec=3
 

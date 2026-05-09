@@ -147,7 +147,7 @@ if [[ "${INSTALL_SYSTEMD}" == "true" ]]; then
 else
   log "skipping systemd install because INSTALL_SYSTEMD=${INSTALL_SYSTEMD}"
   log "manual gateway start: ./scripts/start_gateway.sh"
-  log "manual bot start: CODER_BOT_ENV_FILE=${ENV_FILE} ${UV_BIN} run --frozen gunicorn -c ${APP_DIR}/gunicorn.conf.py issue_bot_service:APP"
+  log "manual bot start: CODER_BOT_ENV_FILE=${ENV_FILE} ${UV_BIN} run --frozen gunicorn -c ${APP_DIR}/config/gunicorn.conf.py src.main:APP"
 fi
 
 log "bootstrap completed"

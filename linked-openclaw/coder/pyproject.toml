@@ -12,11 +12,12 @@ dependencies = [
 ]
 
 [project.scripts]
-coder-bot = "issue_bot_service:main"
+coder-bot = "src.main:main"
 
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = ["issue_bot_service"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
