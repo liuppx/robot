@@ -58,13 +58,9 @@ def repo_allowed(repo_full_name: str) -> bool:
 
 def webhook_decision(payload: dict[str, Any], event_name: str) -> tuple[bool, str]:
     action = payload.get("action", "")
-    if event_name == "issues":
-        if action == "opened" and CONFIG["run_on_issue_opened"]:
-            return True, "issues.opened"
-        if action == "labeled":
-            label = payload.get("label", {}).get("name", "")
-            if label == CONFIG["trigger_label"]:
-                return True, f"issues.labeled:{label}"
+    if event_name == "issue_comment" and action == "created":
+        if scheduler_module.issue_comment_matches_trigger(payload, CONFIG["trigger_comment"]):
+            return True, f"issue_comment.created:{CONFIG['trigger_comment']}"
     return False, f"ignored:{event_name}.{action}"
 
 

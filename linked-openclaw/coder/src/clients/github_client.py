@@ -165,6 +165,39 @@ def list_open_issues(
     return issues, first_response.headers.get("ETag"), False
 
 
+def list_issue_comments(
+    config: dict[str, Any],
+    token: str,
+    owner: str,
+    repo: str,
+    issue_number: int,
+    *,
+    since: str | None = None,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {"per_page": 100}
+    if since:
+        params["since"] = since
+
+    comments: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        response = github_request(
+            config,
+            "GET",
+            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            token=token,
+            params={**params, "page": page},
+        )
+        batch = response.json()
+        if not batch:
+            break
+        comments.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    return comments
+
+
 def create_fork(config: dict[str, Any], token: str, owner: str, repo: str) -> None:
     github_request(
         config,

@@ -50,8 +50,9 @@ class IssueServiceSessionKeyTests(unittest.TestCase):
             "gh-yeying-community-deployer-issue-95",
         )
 
-        self.assertIn("当前提示里已经附带 Issue 正文", prompt)
-        self.assertIn("不要把 `gh issue view` 当成继续讨论的前置条件", prompt)
+        self.assertIn("Issue 正文：", prompt)
+        self.assertIn("只需要新增一个测试文件。", prompt)
+        self.assertNotIn("gh issue view", prompt)
 
 
 if __name__ == "__main__":

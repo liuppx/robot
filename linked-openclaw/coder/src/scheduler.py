@@ -18,7 +18,7 @@ from src.clients.feishu_client import (
     feishu_message_marker_is_newer,
     message_matches_confirm_keywords,
 )
-from src.clients.github_client import get_installation_token, list_open_issues
+from src.clients.github_client import get_installation_token, list_issue_comments, list_open_issues
 from src.utils.helpers import ensure_dir, newer_utc_timestamp, now_utc, shift_utc_timestamp, short_text
 
 
@@ -88,6 +88,18 @@ def poll_cache_repo_state(state: dict[str, Any], repo_full_name: str) -> dict[st
         repo_state = {}
         repos[repo_full_name] = repo_state
     return repo_state
+
+
+def poll_cache_issue_state(state: dict[str, Any], repo_full_name: str, issue_number: int) -> dict[str, Any]:
+    normalized = normalize_state(state)
+    poll_cache = normalized["poll_cache"]
+    issues = poll_cache["issues"]
+    issue_key = poll_cache_issue_key(repo_full_name, issue_number)
+    issue_state = issues.get(issue_key)
+    if not isinstance(issue_state, dict):
+        issue_state = {}
+        issues[issue_key] = issue_state
+    return issue_state
 
 
 def poll_cache_issue_key(repo_full_name: str, issue_number: int) -> str:
@@ -162,6 +174,18 @@ def remove_issue_from_state(config: dict[str, Any], repo_full_name: str, issue_n
 
 def trigger_key(repo_full_name: str, issue_number: int, kind: str, value: str) -> str:
     return f"{repo_full_name}#{issue_number}:{kind}:{value}"
+
+
+def issue_comment_matches_trigger(payload: dict[str, Any], trigger_comment: str) -> bool:
+    issue = payload.get("issue") or {}
+    if not isinstance(issue, dict):
+        issue = {}
+    if issue.get("pull_request"):
+        return False
+    comment = payload.get("comment") or {}
+    if not isinstance(comment, dict):
+        comment = {}
+    return message_matches_confirm_keywords(str(comment.get("body") or ""), [trigger_comment])
 
 
 def build_payload(
@@ -458,6 +482,9 @@ def detect_poll_trigger(
     repo_full_name: str,
     issue: dict[str, Any],
     state: dict[str, Any],
+    token: str,
+    owner: str,
+    repo: str,
 ) -> tuple[tuple[dict[str, Any], str, str] | None, bool, bool]:
     issue_number = int(issue["number"])
     processed = state.setdefault("processed_triggers", {})
@@ -466,25 +493,54 @@ def detect_poll_trigger(
     if context.issue_has_active_job(repo_full_name, issue_number):
         return None, False, True
 
-    label_names = {label.get("name", "") for label in issue.get("labels", [])}
-    if context.config["trigger_label"] and context.config["trigger_label"] in label_names:
-        key = trigger_key(repo_full_name, issue_number, "label", context.config["trigger_label"])
-        if key not in processed:
-            payload = build_payload(
-                repo_full_name,
-                issue,
-                action="labeled",
-                label_name=context.config["trigger_label"],
-            )
-            return (payload, f"poll.issues_labeled:{context.config['trigger_label']}", key), False, False
+    state_changed = False
+    issue_cache = poll_cache_issue_state(state, repo_full_name, issue_number)
+    latest_comment_created_at = str(issue_cache.get("last_comment_created_at") or "")
+    comment_count = int(issue.get("comments") or 0)
+    if comment_count <= 0 and not latest_comment_created_at:
+        return None, state_changed, False
+    comment_since = (
+        shift_utc_timestamp(latest_comment_created_at, seconds=-1)
+        if latest_comment_created_at
+        else None
+    )
+    comments = list_issue_comments(
+        context.config,
+        token,
+        owner,
+        repo,
+        issue_number,
+        since=comment_since,
+    )
+    for comment in comments:
+        latest_comment_created_at = (
+            newer_utc_timestamp(latest_comment_created_at, str(comment.get("created_at") or ""))
+            or latest_comment_created_at
+        )
+        comment_id = str(comment.get("id") or "").strip()
+        if not comment_id:
+            continue
+        key = trigger_key(repo_full_name, issue_number, "comment", comment_id)
+        if key in processed:
+            continue
+        user_type = str(((comment.get("user") or {}).get("type")) or "").strip().lower()
+        if user_type == "bot":
+            continue
+        if not message_matches_confirm_keywords(str(comment.get("body") or ""), [context.config["trigger_comment"]]):
+            continue
+        if latest_comment_created_at:
+            state_changed |= state_set(issue_cache, "last_comment_created_at", latest_comment_created_at)
+        payload: dict[str, Any] = {
+            "action": "created",
+            "repository": {"full_name": repo_full_name},
+            "issue": issue,
+            "comment": comment,
+        }
+        return (payload, f"poll.issue_comment:{context.config['trigger_comment']}", key), state_changed, False
 
-    if context.config["run_on_issue_opened"]:
-        key = trigger_key(repo_full_name, issue_number, "opened", "issue")
-        if key not in processed:
-            payload = build_payload(repo_full_name, issue, action="opened")
-            return (payload, "poll.issues_opened", key), False, False
-
-    return None, False, False
+    if latest_comment_created_at:
+        state_changed |= state_set(issue_cache, "last_comment_created_at", latest_comment_created_at)
+    return None, state_changed, False
 
 
 def poll_once(context: SchedulerContext) -> None:
@@ -539,6 +595,9 @@ def poll_once(context: SchedulerContext) -> None:
                 repo_full_name,
                 issue,
                 state,
+                token,
+                owner,
+                repo,
             )
             state_changed |= issue_state_changed
             if issue_requests_rescan:
@@ -618,6 +677,7 @@ __all__ = [
     "default_state",
     "dispatch_loop",
     "dispatch_queued_jobs",
+    "issue_comment_matches_trigger",
     "load_state",
     "poll_loop",
     "poll_once",

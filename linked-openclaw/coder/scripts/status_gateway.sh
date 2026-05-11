@@ -122,4 +122,10 @@ OPENCLAW_CONFIG_PATH="${CONFIG_PATH}" OPENCLAW_STATE_DIR="${STATE_DIR}" \
   "${RUNNER}" config get channels.feishu.groupAllowFrom 2>/dev/null || true
 
 echo "== recent log =="
+if [[ ! -f "${LOG_PATH}" ]]; then
+  fallback_log="$(ls -1t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${fallback_log}" ]]; then
+    LOG_PATH="${fallback_log}"
+  fi
+fi
 tail -n 40 "${LOG_PATH}" 2>/dev/null || echo "log file not found: ${LOG_PATH}"

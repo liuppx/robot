@@ -169,6 +169,7 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
         "allowed_repos": allowed_repos,
         "run_on_issue_opened": env_bool("RUN_ON_ISSUE_OPENED", False),
         "trigger_label": os.getenv("TRIGGER_LABEL", "ai-run").strip(),
+        "trigger_comment": os.getenv("TRIGGER_COMMENT", "/run").strip() or "/run",
         "execution_backend": (
             os.getenv("EXECUTION_BACKEND", DEFAULT_EXECUTION_BACKEND).strip().lower()
             or DEFAULT_EXECUTION_BACKEND
@@ -303,8 +304,8 @@ def collect_config_errors(config: dict[str, Any]) -> list[str]:
     if not config["openclaw_runtime_config_path"]:
         errors.append("OPENCLAW_RUNTIME_CONFIG_PATH 不能为空。")
 
-    if not config["trigger_label"] and not config["run_on_issue_opened"]:
-        errors.append("至少需要保留一种触发方式：TRIGGER_LABEL 或 RUN_ON_ISSUE_OPENED=true。")
+    if not config["trigger_comment"]:
+        errors.append("TRIGGER_COMMENT 不能为空。")
 
     return errors
 

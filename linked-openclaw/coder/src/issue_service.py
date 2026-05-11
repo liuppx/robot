@@ -412,23 +412,16 @@ class IssueService:
         session_key: str | None = None,
     ) -> str:
         issue_body = short_text(issue.get("body") or "(no issue body)", 6000)
+        issue_title = issue.get("title") or f"Issue #{issue['number']}"
         lines = [
             f"你正在继续处理 GitHub Issue #{issue['number']}。",
             f"仓库：{repo_full_name}",
-            f"标题：{issue.get('title') or f'Issue #{issue['number']}'}",
+            f"标题：{issue_title}",
         ]
         if session_key:
             lines.append(f"会话标识：{session_key}")
         lines.extend(
             [
-                "",
-                "要求：",
-                "- 当前提示里已经附带 Issue 正文；如果 shell 工具不可用，不要把 `gh issue view` 当成继续讨论的前置条件",
-                "- 先在当前 Feishu 线程里沟通方案，明确边界和改动计划",
-                "- 只有线程里明确确认执行后，外层服务才会真正开始 coding",
-                "- 真正执行任务时，优先沿用当前会话上下文",
-                "- 外层 GitHub App 仍负责排队、仓库准备和最终 PR 流程",
-                "",
                 "Issue 正文：",
                 issue_body,
             ]
