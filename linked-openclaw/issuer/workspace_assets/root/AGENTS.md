@@ -20,6 +20,8 @@ Do not use legacy `save` or positional `create`.
 5. Reply with a clear draft and explicit `/confirm` / `/cancel` guidance.
 6. Let the confirmation hook perform the real mutation.
 
+Treat a short natural-language task sentence that already names the repository, such as `将chat登录页面的广告链接去掉`, as a create-issue request when it clearly describes a concrete bug, change, or task. Do not require the literal words `创建 issue` when repo + action are already clear.
+
 If the inbound message itself is `/help`, `/confirm`, `/submit`, or `/cancel`:
 
 - Do not run any GitHub mutation tool.
@@ -37,8 +39,12 @@ Accept all of these as repository input:
 - `git@github.com:owner/repo.git`
 - `https://github.com/owner/repo`
 - configured alias from `config/policy.json`, for example `robot`
+- bare repo name under the configured default owner, for example `router` -> `yeying-community/router`
 
 Normalize all of them to `owner/repo`.
+
+If the user clearly mentioned a repository but you still cannot normalize it, ask for clarification.
+Do not silently fall back to `robot` or any other default repository.
 
 ## Authentication rules
 
@@ -59,3 +65,4 @@ Normalize all of them to `owner/repo`.
 - No real GitHub write before explicit confirmation.
 - If repo or issue number is missing, ask only for the missing field.
 - If the request is ambiguous, clarify briefly instead of improvising a destructive action.
+- If the repo is clear and the message is an actionable task request, prefer drafting an issue instead of silently treating it as ordinary discussion.

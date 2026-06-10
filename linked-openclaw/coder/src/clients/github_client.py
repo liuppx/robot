@@ -120,11 +120,12 @@ def list_open_issues(
     since: str | None = None,
     etag: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None, bool]:
+    issue_scan_limit = int(config.get("issue_scan_limit") or 30)
     params = {
         "state": "open",
         "sort": "updated",
         "direction": "desc",
-        "per_page": config["issue_scan_limit"],
+        "per_page": issue_scan_limit,
     }
     if since:
         params["since"] = since
@@ -158,7 +159,7 @@ def list_open_issues(
         if not batch:
             break
         issues.extend(batch)
-        if len(batch) < config["issue_scan_limit"]:
+        if len(batch) < issue_scan_limit:
             break
         page += 1
 

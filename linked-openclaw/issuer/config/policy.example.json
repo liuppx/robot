@@ -26,5 +26,15 @@
       "owner": "yeying-community",
       "repo": "robot"
     }
+  ],
+  "githubUserAliases": [
+    {
+      "alias": "刘鑫",
+      "login": "kobofare"
+    },
+    {
+      "alias": "张博",
+      "login": "dlwlrma-333"
+    }
   ]
 }

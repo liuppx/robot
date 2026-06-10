@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { appRoot, installFakeCreateTool, makeTempDir, readJsonLines, runNodeJson, writeJson } from "./helpers.mjs";
+import { appRoot, installFakeCreateTool, makeTempDir, readJsonLines, runNodeJson, runNodeJsonAsync, writeJson } from "./helpers.mjs";
 
 const pendingActionPath = path.join(appRoot, "workspace_assets", "tools", "pending_action.mjs");
 
@@ -150,6 +150,7 @@ test("pending_action keeps repo-scoped drafts isolated in sqlite", () => {
   );
   assert.equal(cleared.result.status, 0);
   assert.equal(cleared.json.pending.target.repo, "robot");
+  assert.equal(cleared.json.pending.status, "cancelled");
 
   const notFound = runNodeJson(
     pendingActionPath,
@@ -158,6 +159,14 @@ test("pending_action keeps repo-scoped drafts isolated in sqlite", () => {
   );
   assert.equal(notFound.result.status, 1);
   assert.equal(notFound.json.error, "not_found");
+
+  const allEntries = runNodeJson(
+    pendingActionPath,
+    ["--action", "list", "--all", "--conversationId", "chat-a", "--requesterId", "user-a"],
+    { env }
+  );
+  assert.equal(allEntries.result.status, 0);
+  assert.equal(allEntries.json.entries.find((entry) => entry.target.repo === "robot")?.status, "cancelled");
 
   const auditEntries = readJsonLines(env.ISSUER_AUDIT_LOG_PATH).map((entry) => entry.event);
   assert.ok(auditEntries.includes("pending.create"));
@@ -262,8 +271,64 @@ test("pending_action execute keeps preview-time attachments across confirm execu
   );
   assert.equal(executed.result.status, 0);
   assert.equal(executed.json.ok, true);
+  assert.equal(executed.json.pending.status, "done");
   assert.equal(executed.json.executed.attachments.length, 1);
   assert.equal(executed.json.executed.attachments[0].filename, "image.jpg");
+
+  const allEntries = runNodeJson(
+    pendingActionPath,
+    ["--action", "list", "--all", "--conversationId", "chat-exec", "--requesterId", "user-a"],
+    { env: executeEnv }
+  );
+  assert.equal(allEntries.result.status, 0);
+  assert.equal(allEntries.json.entries.length, 1);
+  assert.equal(allEntries.json.entries[0].status, "done");
+});
+
+test("pending_action execute atomically claims a draft so concurrent executes do not double-run", async () => {
+  const root = makeTempDir("issuer-pending-race-");
+  fs.mkdirSync(path.join(root, "tools"), { recursive: true });
+  installFakeCreateTool(path.join(root, "tools", "github_issue_create.mjs"));
+
+  const env = {
+    ...testEnv(root),
+    ISSUER_WORKSPACE_ROOT: root
+  };
+
+  const created = createDraft(env, {
+    conversationId: "chat-race",
+    requesterId: "user-a",
+    requesterLabel: "UserA",
+    headline: "robot race draft",
+    params: {
+      owner: "yeying-community",
+      repo: "robot",
+      title: "T-race",
+      body: "B-race"
+    }
+  });
+  assert.equal(created.result.status, 0);
+
+  const executeArgs = ["--action", "execute", "--conversationId", "chat-race", "--requesterId", "user-a", "--repoQuery", "robot"];
+  const executeEnv = {
+    ...env,
+    FAKE_CREATE_SLEEP_MS: "250"
+  };
+  const [first, second] = await Promise.all([
+    runNodeJsonAsync(pendingActionPath, executeArgs, { env: executeEnv }),
+    runNodeJsonAsync(pendingActionPath, executeArgs, { env: executeEnv })
+  ]);
+  const results = [first, second];
+  const success = results.find((item) => item.result.status === 0);
+  const failure = results.find((item) => item.result.status !== 0);
+
+  assert.ok(success);
+  assert.ok(failure);
+  assert.equal(success.json.ok, true);
+  assert.equal(success.json.pending.status, "done");
+  assert.equal(failure.json.ok, false);
+  assert.equal(failure.json.error, "not_pending");
+  assert.equal(failure.json.current.status, "executing");
 });
 
 test("pending_action create writes explicit follow owner into issue body", () => {

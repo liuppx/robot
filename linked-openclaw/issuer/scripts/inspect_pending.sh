@@ -115,6 +115,7 @@ def query_entries(db, where=None, args=()):
     sql = """
     select
       draft_id,
+      status,
       slot_key,
       scope_conversation_id,
       requester_id,
@@ -136,10 +137,20 @@ db = connect(db_path)
 
 if command == "summary":
     total = db.execute("select count(*) from pending_actions").fetchone()[0]
+    active = db.execute("select count(*) from pending_actions where status = 'pending'").fetchone()[0]
+    by_status = db.execute(
+        """
+        select status, count(*) as count
+        from pending_actions
+        group by status
+        order by count desc, status asc
+        """
+    ).fetchall()
     by_repo = db.execute(
         """
         select target_repo_key as repo, count(*) as count
         from pending_actions
+        where status = 'pending'
         group by target_repo_key
         order by count desc, repo asc
         """
@@ -148,13 +159,14 @@ if command == "summary":
         """
         select scope_conversation_id as conversation_id, count(*) as count
         from pending_actions
+        where status = 'pending'
         group by scope_conversation_id
         order by count desc, conversation_id asc
         """
     ).fetchall()
     latest = db.execute(
         """
-        select draft_id, requester_id, target_repo_key, kind, headline, updated_at
+        select draft_id, status, requester_id, target_repo_key, kind, headline, updated_at
         from pending_actions
         order by updated_at desc, created_at desc
         limit 10
@@ -162,7 +174,11 @@ if command == "summary":
     ).fetchall()
 
     print(f"db_path={db_path}")
-    print(f"total_pending={total}")
+    print(f"total_rows={total}")
+    print(f"active_pending={active}")
+    print("")
+    print("== by status ==")
+    print_rows(by_status)
     print("")
     print("== by repo ==")
     print_rows(by_repo)

@@ -20,6 +20,8 @@
 ### Repo aliases
 
 Read `config/policy.json` first.
+If the repo is not in `repoAliases`, a bare repo name may still be valid when `config/github-app.config.env` sets `GITHUB_DEFAULT_OWNER`.
+Do not treat `GITHUB_DEFAULT_REPO` as a fallback when the user already named a different repo.
 
 ### Important operational rules
 

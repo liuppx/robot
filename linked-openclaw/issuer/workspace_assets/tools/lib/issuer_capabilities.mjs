@@ -28,7 +28,7 @@ function buildList(title, items) {
 export function buildRepoAliasesSection(policy) {
   const aliases = Array.isArray(policy?.repoAliases) ? policy.repoAliases.filter(Boolean) : [];
   if (aliases.length === 0) {
-    return "仓库别名：当前未配置。";
+    return "";
   }
   return buildList(
     "仓库别名：",

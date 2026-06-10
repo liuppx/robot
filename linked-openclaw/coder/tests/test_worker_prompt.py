@@ -1,8 +1,13 @@
 import unittest
+from pathlib import Path
+from subprocess import CompletedProcess
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from src.worker import (
     build_missing_changes_retry_prompt,
     build_prompt,
+    run_codex_chat_turn,
     summarize_openclaw_turn_failure,
 )
 
@@ -48,6 +53,44 @@ class WorkerPromptTests(unittest.TestCase):
         self.assertIn("openclaw turn failed before producing a structured final response", str(summary))
         self.assertIn("exec failed", str(summary))
         self.assertIn("incomplete turn detected", str(summary))
+
+    def test_run_codex_chat_turn_uses_selected_model_override(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            config = {
+                "data_dir": tmpdir,
+                "codex_bin": "codex",
+                "codex_model": "gpt-5.4",
+                "codex_timeout": 60,
+                "codex_use_dangerously_bypass": True,
+            }
+            captured: list[list[str]] = []
+
+            def fake_run_command(command, **kwargs):
+                captured.append(list(command))
+                return CompletedProcess(
+                    command,
+                    0,
+                    stdout=(
+                        '{"type":"thread.started","thread_id":"thread-123"}\n'
+                        '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+                    ),
+                    stderr="",
+                )
+
+            with patch("src.worker.build_codex_env", return_value={}), patch(
+                "src.worker.run_command",
+                side_effect=fake_run_command,
+            ):
+                turn = run_codex_chat_turn(
+                    config,
+                    Path(tmpdir),
+                    "hello",
+                    selected_model="gpt-5.5",
+                )
+
+        self.assertEqual(turn["text"], "ok")
+        self.assertIn("-m", captured[0])
+        self.assertIn("gpt-5.5", captured[0])
 
 
 if __name__ == "__main__":

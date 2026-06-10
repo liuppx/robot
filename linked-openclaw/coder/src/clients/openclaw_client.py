@@ -123,6 +123,30 @@ def apply_openclaw_runtime_sections(
     return merged
 
 
+def apply_openclaw_feishu_passive_mode(config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    if not config.get("openclaw_feishu_passive_mode", True):
+        return payload
+
+    channels = payload.get("channels")
+    if not isinstance(channels, dict):
+        return payload
+    feishu = channels.get("feishu")
+    if not isinstance(feishu, dict):
+        return payload
+
+    passive_payload = clone_json_value(payload)
+    passive_channels = passive_payload.get("channels") or {}
+    passive_feishu = passive_channels.get("feishu") or {}
+    passive_feishu["dmPolicy"] = "allowlist"
+    passive_feishu["allowFrom"] = []
+    passive_feishu["groupPolicy"] = "allowlist"
+    passive_feishu["groupAllowFrom"] = []
+    passive_feishu["groups"] = {}
+    passive_channels["feishu"] = passive_feishu
+    passive_payload["channels"] = passive_channels
+    return passive_payload
+
+
 def ensure_openclaw_runtime_config(config: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     static_path = openclaw_static_config_path(config)
     runtime_path = openclaw_runtime_config_path(config)
@@ -151,6 +175,7 @@ def ensure_openclaw_runtime_config(config: dict[str, Any]) -> tuple[Path, dict[s
             write_json_object(static_path, cleaned_static)
 
         effective_payload = apply_openclaw_runtime_sections(cleaned_static, merged_sections)
+        effective_payload = apply_openclaw_feishu_passive_mode(config, effective_payload)
         if runtime_payload != effective_payload:
             write_json_object(runtime_path, effective_payload)
 

@@ -142,7 +142,7 @@ test("confirmation bridge requires explicit repo when multiple drafts exist and 
   assert.ok(auditEvents.includes("hook.cancel.cleared"));
 });
 
-test("help message auto-renders command block and repo aliases", async (t) => {
+test("help message auto-renders command block", async (t) => {
   const workspaceRoot = makeTempDir("issuer-help-");
   fs.cpSync(sourceToolsDir, path.join(workspaceRoot, "tools"), { recursive: true });
   fs.cpSync(sourceHooksDir, path.join(workspaceRoot, "hooks"), { recursive: true });
@@ -158,7 +158,41 @@ test("help message auto-renders command block and repo aliases", async (t) => {
   const helpEvent = makeEvent("user-a", "/help");
   await handler(helpEvent);
   assert.equal(helpEvent.messages.length, 1);
-  assert.match(helpEvent.messages[0], /普通用户只需要两件事/);
+  assert.match(helpEvent.messages[0], /这个机器人可以帮你做 4 件事/);
+  assert.match(helpEvent.messages[0], /指定跟进人 \/ assignees/);
+  assert.match(helpEvent.messages[0], /GitHub 的 `assignee`/);
+  assert.match(helpEvent.messages[0], /上传附件的方法/);
+  assert.match(helpEvent.messages[0], /默认单个附件不要超过 5MB/);
   assert.match(helpEvent.messages[0], /\/confirm \[repo\|draft:<id>\]/);
-  assert.match(helpEvent.messages[0], /robot -> yeying-community\/robot/);
+  assert.doesNotMatch(helpEvent.messages[0], /仓库别名：/);
+});
+
+test("confirmation bridge resolves bare repo names under the default owner", async (t) => {
+  const workspaceRoot = makeTempDir("issuer-hook-router-");
+  fs.cpSync(sourceToolsDir, path.join(workspaceRoot, "tools"), { recursive: true });
+  fs.cpSync(sourceHooksDir, path.join(workspaceRoot, "hooks"), { recursive: true });
+  fs.mkdirSync(path.join(workspaceRoot, "config"), { recursive: true });
+  writeJson(path.join(workspaceRoot, "config", "policy.json"), {
+    repoAliases: [{ alias: "robot", owner: "yeying-community", repo: "robot" }],
+    admins: ["admin-user"]
+  });
+  fs.writeFileSync(
+    path.join(workspaceRoot, "config", "github-app.config.env"),
+    "GITHUB_DEFAULT_OWNER=yeying-community\nGITHUB_DEFAULT_REPO=robot\n"
+  );
+
+  const env = {
+    ...workspaceEnv(workspaceRoot),
+    GITHUB_ENV_FILE: path.join(workspaceRoot, "config", "github-app.config.env")
+  };
+  const restoreEnv = withEnv(env);
+  t.after(restoreEnv);
+
+  const routerDraft = createDraft(workspaceRoot, env, "user-a", "router", "router draft");
+  assert.equal(routerDraft.result.status, 0);
+
+  const cancelRouter = makeEvent("user-a", "/cancel router");
+  await handler(cancelRouter);
+  assert.equal(cancelRouter.messages.length, 1);
+  assert.match(cancelRouter.messages[0], /已取消 yeying-community\/router 的待执行操作/);
 });

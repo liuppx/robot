@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import textwrap
 import time
@@ -16,12 +17,14 @@ from src.clients.feishu_client import (
     build_feishu_thread_peer_id,
     build_feishu_thread_session_key,
     is_feishu_route_session_key,
+    normalize_confirm_text,
     resolve_feishu_runtime_settings,
 )
 from src.clients.github_client import (
     comment_issue,
     get_installation_token,
     github_request,
+    list_open_issues,
 )
 from src.clients.openclaw_client import (
     load_openclaw_config_json,
@@ -37,6 +40,54 @@ from src.utils.helpers import (
 
 
 ACTIVE_JOB_STATUSES = {"queued", "running"}
+ISSUE_COMMAND_PATTERN = re.compile(r"(?mi)^\s*/issue_([a-z0-9][a-z0-9._-]*)(?:\s*#?\s*(\d+))?\s*$")
+HELP_COMMAND_PATTERN = re.compile(r"(?mi)^\s*/help\s*$")
+MODEL_COMMAND_PATTERN = re.compile(r"(?mi)^\s*/model\s+([a-z0-9][a-z0-9._-]*)\s*$")
+MODEL_RESET_COMMAND_PATTERN = re.compile(r"(?mi)^\s*/model\s+(?:default|reset)\s*$")
+SUPPORTED_CODEX_MODELS = (
+    "gpt-5.2",
+    "gpt-5.3-codex",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+)
+
+
+def build_repo_alias_map(config: dict[str, Any]) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for repo_full_name in config.get("allowed_repos", []):
+        repo_name = str(repo_full_name).split("/", 1)[-1].strip().lower()
+        if repo_name and repo_name not in aliases:
+            aliases[repo_name] = str(repo_full_name)
+    for alias, repo_full_name in (config.get("repo_aliases") or {}).items():
+        normalized_alias = str(alias or "").strip().lower()
+        normalized_repo = str(repo_full_name or "").strip()
+        if normalized_alias and normalized_repo:
+            aliases[normalized_alias] = normalized_repo
+    return aliases
+
+
+def parse_feishu_issue_command(text: str) -> tuple[str, int | None] | None:
+    match = ISSUE_COMMAND_PATTERN.match(normalize_confirm_text(text))
+    if not match:
+        return None
+    alias = str(match.group(1) or "").strip().lower()
+    issue_number_raw = str(match.group(2) or "").strip()
+    return alias, (int(issue_number_raw) if issue_number_raw else None)
+
+
+def is_feishu_help_command(text: str) -> bool:
+    return HELP_COMMAND_PATTERN.match(normalize_confirm_text(text)) is not None
+
+
+def parse_feishu_model_command(text: str) -> str | None:
+    normalized = normalize_confirm_text(text)
+    if MODEL_RESET_COMMAND_PATTERN.match(normalized):
+        return ""
+    match = MODEL_COMMAND_PATTERN.match(normalized)
+    if not match:
+        return None
+    return str(match.group(1) or "").strip().lower()
 
 
 @dataclass
@@ -129,6 +180,156 @@ class IssueService:
     def build_issue_agent_id(self, repo_full_name: str, issue_number: int) -> str:
         return worker_module.build_issue_agent_id(self.config, repo_full_name, issue_number)
 
+    def repo_alias_map(self) -> dict[str, str]:
+        return build_repo_alias_map(self.config)
+
+    def resolve_repo_alias(self, alias: str) -> str | None:
+        return self.repo_alias_map().get(str(alias or "").strip().lower())
+
+    def issue_progress_label(self, repo_full_name: str, issue_number: int) -> str:
+        active_job = self.get_existing_active_job(repo_full_name, issue_number)
+        if active_job is not None:
+            return str(active_job["status"])
+        session_row = self.get_issue_session(repo_full_name, issue_number)
+        if session_row is None:
+            return "open"
+        session_state = str(session_row["session_state"] or "").strip().lower()
+        if not session_state or session_state in {"done", "closed"}:
+            return "open"
+        return session_state
+
+    def list_pending_repo_issues(self, repo_full_name: str, limit: int = 10) -> list[dict[str, Any]]:
+        owner, repo = repo_full_name.split("/", 1)
+        token = get_installation_token(self.config)
+        issues, _, _ = list_open_issues(self.config, token, owner, repo)
+        result: list[dict[str, Any]] = []
+        for issue in issues:
+            if issue.get("pull_request"):
+                continue
+            issue_number = int(issue["number"])
+            result.append(
+                {
+                    "number": issue_number,
+                    "title": str(issue.get("title") or f"Issue #{issue_number}"),
+                    "updated_at": str(issue.get("updated_at") or ""),
+                    "progress": self.issue_progress_label(repo_full_name, issue_number),
+                }
+            )
+            if len(result) >= max(1, limit):
+                break
+        return result
+
+    def build_pending_issue_list_message(
+        self,
+        repo_alias: str,
+        repo_full_name: str,
+        issues: list[dict[str, Any]],
+    ) -> str:
+        if not issues:
+            return (
+                f"[Coder] {repo_full_name} 当前没有待处理的 open issue。\n\n"
+                f"你也可以直接发送 `/issue_{repo_alias} <issue_number>` 指定某个 issue。"
+            )
+        lines = [f"[Coder] {repo_full_name} 当前待处理 issue（最多 {len(issues)} 条）：", ""]
+        for issue in issues:
+            updated_at = short_text(str(issue.get("updated_at") or ""), 19)
+            lines.append(
+                f"- #{issue['number']} [{issue['progress']}] {short_text(str(issue['title']), 90)}"
+                f" (updated: {updated_at})"
+            )
+        lines.extend(
+            [
+                "",
+                f"发送 `/issue_{repo_alias} <issue_number>` 可发起该 issue 的持续会话。",
+                "会话开始后，先在线程里讨论方案；确认后再在线程中发送 `/run`。",
+            ]
+        )
+        return "\n".join(lines).strip()
+
+    def build_feishu_help_message(self) -> str:
+        return textwrap.dedent(
+            f"""
+            [Coder] 使用方式：
+
+            1. 发送 `/issue_<repo>`
+            查看该仓库当前待处理的 issue 列表。
+
+            2. 发送 `/issue_<repo> #<issue_number>`
+            或 `/issue_<repo> <issue_number>`
+            发起这个 issue 的持续会话。
+
+            进入线程后，先讨论方案；确认后再在线程里发送 `/run`。
+            """
+        ).strip()
+
+    def primary_feishu_chat_id(self) -> str:
+        settings = resolve_feishu_runtime_settings(self.config)
+        return str(settings["chat_id"])
+
+    def handle_feishu_chat_command(self, chat_id: str, message: dict[str, Any]) -> bool:
+        if is_feishu_help_command(str(message.get("content") or "")):
+            self.feishu_send_text_message(chat_id, self.build_feishu_help_message())
+            return True
+
+        parsed = parse_feishu_issue_command(str(message.get("content") or ""))
+        if parsed is None:
+            return False
+
+        repo_alias, issue_number = parsed
+        repo_full_name = self.resolve_repo_alias(repo_alias)
+        if not repo_full_name:
+            known = ", ".join(sorted(self.repo_alias_map().keys())[:12]) or "(none)"
+            self.feishu_send_text_message(
+                chat_id,
+                f"[Coder] 未找到仓库别名 `{repo_alias}`。\n\n当前可用别名：{known}",
+            )
+            return True
+
+        if issue_number is None:
+            try:
+                issues = self.list_pending_repo_issues(repo_full_name, limit=10)
+            except Exception as exc:
+                self.feishu_send_text_message(
+                    chat_id,
+                    f"[Coder] 读取 {repo_full_name} 的 issue 列表失败：{short_text(str(exc), 1200)}",
+                )
+                return True
+            self.feishu_send_text_message(
+                chat_id,
+                self.build_pending_issue_list_message(repo_alias, repo_full_name, issues),
+            )
+            return True
+
+        try:
+            payload = self.build_issue_payload_from_github(repo_full_name, issue_number)
+        except Exception as exc:
+            self.feishu_send_text_message(
+                chat_id,
+                f"[Coder] 读取 {repo_full_name}#{issue_number} 失败：{short_text(str(exc), 1200)}",
+            )
+            return True
+
+        issue = payload.get("issue") or {}
+        if issue.get("pull_request"):
+            self.feishu_send_text_message(
+                chat_id,
+                f"[Coder] {repo_full_name}#{issue_number} 是 Pull Request，不是 issue。",
+            )
+            return True
+        if str(issue.get("state") or "").strip().lower() != "open":
+            self.feishu_send_text_message(
+                chat_id,
+                f"[Coder] {repo_full_name}#{issue_number} 当前不是 open 状态，不能发起新会话。",
+            )
+            return True
+
+        self.record_issue_trigger(
+            payload,
+            f"feishu.issue_select:{chat_id}:{repo_alias}:{issue_number}",
+            chat_id=chat_id,
+        )
+        return True
+
     def get_issue_session(self, repo_full_name: str, issue_number: int) -> sqlite3.Row | None:
         return db_module.get_issue_session(self.config, repo_full_name, issue_number)
 
@@ -138,6 +339,8 @@ class IssueService:
         issue_number: int,
         *,
         backend: str | None = None,
+        selected_model: str | None = None,
+        clear_selected_model: bool = False,
         session_key: str | None = None,
         session_state: str | None = None,
         last_trigger_reason: str | None = None,
@@ -160,6 +363,15 @@ class IssueService:
         )
         record = {
             "backend": backend or (str(existing["backend"]) if existing else self.config["execution_backend"]),
+            "selected_model": (
+                None
+                if clear_selected_model
+                else (
+                    selected_model
+                    if selected_model is not None
+                    else (str(existing["selected_model"]) if existing and existing["selected_model"] else None)
+                )
+            ),
             "session_key": final_session_key,
             "session_state": session_state
             or (str(existing["session_state"]) if existing and existing["session_state"] else "triggered"),
@@ -207,6 +419,7 @@ class IssueService:
             repo_full_name,
             issue_number,
             backend=str(record["backend"]),
+            selected_model=record["selected_model"],
             session_key=str(record["session_key"]),
             session_state=str(record["session_state"]),
             last_trigger_reason=record["last_trigger_reason"],
@@ -245,6 +458,11 @@ class IssueService:
             repo_full_name,
             issue_number,
             backend=self.config["execution_backend"],
+            selected_model=(
+                str(existing["selected_model"])
+                if existing and existing["selected_model"]
+                else None
+            ),
             session_key=session_key,
             session_state=(
                 str(existing["session_state"])
@@ -259,6 +477,9 @@ class IssueService:
 
     def list_issue_bindings(self, repo_full_name: str, issue_number: int) -> list[sqlite3.Row]:
         return db_module.list_issue_bindings(self.config, repo_full_name, issue_number)
+
+    def list_issue_jobs(self, repo_full_name: str, issue_number: int) -> list[sqlite3.Row]:
+        return db_module.list_jobs_for_issue(self.config, repo_full_name, issue_number)
 
     def upsert_feishu_binding(
         self,
@@ -428,6 +649,20 @@ class IssueService:
         )
         return "\n".join(lines).strip()
 
+    def build_feishu_handoff_thread_prompt(
+        self,
+        repo_full_name: str,
+        issue_number: int,
+    ) -> str:
+        return textwrap.dedent(
+            f"""
+            已切换到 {repo_full_name}#{issue_number} 的讨论线程。
+
+            请直接在线程里说明你想先讨论的方案、边界或风险点。
+            我会先给方案建议；确认开始执行后，再在线程里发送 `/run`。
+            """
+        ).strip()
+
     def build_feishu_discussion_prompt(
         self,
         repo_full_name: str,
@@ -473,18 +708,22 @@ class IssueService:
         issue_number: int,
         issue: dict[str, Any],
         handoff_prompt: str,
+        *,
+        chat_id: str | None = None,
     ) -> tuple[sqlite3.Row, bool]:
-        settings = resolve_feishu_runtime_settings(self.config)
-        chat_id = settings["chat_id"]
-        existing_binding = self.preferred_issue_binding(repo_full_name, issue_number, chat_id=chat_id)
+        target_chat_id = str(chat_id or self.primary_feishu_chat_id()).strip()
+        existing_binding = self.preferred_issue_binding(repo_full_name, issue_number, chat_id=target_chat_id)
         created_new = existing_binding is None
 
         if existing_binding is None:
             root_message_id = self.feishu_send_text_message(
-                chat_id,
+                target_chat_id,
                 build_feishu_handoff_intro(repo_full_name, issue),
             )
-            prompt_message_id = self.feishu_reply_in_thread(root_message_id, handoff_prompt)
+            prompt_message_id = self.feishu_reply_in_thread(
+                root_message_id,
+                self.build_feishu_handoff_thread_prompt(repo_full_name, issue_number),
+            )
             prompt_message = self.feishu_get_message(prompt_message_id)
             thread_id = str(prompt_message.get("thread_id") or "").strip()
             if not thread_id:
@@ -504,7 +743,10 @@ class IssueService:
             thread_id = str(existing_binding["thread_id"] or "").strip()
             if not thread_id:
                 raise RuntimeError("Feishu binding exists but thread_id is missing")
-            prompt_message_id = self.feishu_reply_in_thread(root_message_id, handoff_prompt)
+            prompt_message_id = self.feishu_reply_in_thread(
+                root_message_id,
+                self.build_feishu_handoff_thread_prompt(repo_full_name, issue_number),
+            )
             prompt_message = self.feishu_get_message(prompt_message_id)
             refreshed_thread_id = str(prompt_message.get("thread_id") or "").strip()
             if refreshed_thread_id:
@@ -516,11 +758,11 @@ class IssueService:
             self.config,
             repo_full_name,
             issue_number,
-            chat_id,
+            target_chat_id,
             thread_id,
         )
         binding = self.upsert_feishu_binding(
-            chat_id=chat_id,
+            chat_id=target_chat_id,
             thread_id=thread_id,
             repo_full_name=repo_full_name,
             issue_number=issue_number,
@@ -551,7 +793,13 @@ class IssueService:
             "issue": issue,
         }
 
-    def record_issue_trigger(self, payload: dict[str, Any], reason: str) -> dict[str, Any]:
+    def record_issue_trigger(
+        self,
+        payload: dict[str, Any],
+        reason: str,
+        *,
+        chat_id: str | None = None,
+    ) -> dict[str, Any]:
         repo_full_name = payload["repository"]["full_name"]
         issue = payload["issue"]
         issue_number = int(issue["number"])
@@ -566,12 +814,13 @@ class IssueService:
             issue_state,
             last_reason=reason,
         )
-        worker_module.ensure_openclaw_issue_agent(
-            self.config,
-            repo_full_name,
-            issue_number,
-            openclaw_issue_workspace_dir(self.config, repo_full_name, issue_number),
-        )
+        if self.config.get("execution_backend") == "openclaw":
+            worker_module.ensure_openclaw_issue_agent(
+                self.config,
+                repo_full_name,
+                issue_number,
+                openclaw_issue_workspace_dir(self.config, repo_full_name, issue_number),
+            )
         session_row = self.ensure_issue_session(repo_full_name, issue_number, issue_title)
         local_session_key = str(session_row["session_key"])
         handoff_prompt = self.build_handoff_prompt(repo_full_name, issue, local_session_key)
@@ -580,6 +829,7 @@ class IssueService:
             issue_number,
             issue,
             handoff_prompt,
+            chat_id=chat_id,
         )
         session_row = self.upsert_issue_session(
             repo_full_name,
@@ -763,10 +1013,10 @@ class IssueService:
         pr_url: str | None = None,
         result_summary: str | None = None,
         error_text: str | None = None,
+        token_usage: dict[str, int] | None = None,
     ) -> None:
         try:
-            settings = resolve_feishu_runtime_settings(self.config)
-            binding = self.preferred_issue_binding(repo_full_name, issue_number, chat_id=settings["chat_id"])
+            binding = self.preferred_issue_binding(repo_full_name, issue_number)
             if binding is None:
                 print(f"warning: no Feishu binding found for {repo_full_name}#{issue_number}; skip result reply")
                 return
@@ -785,6 +1035,8 @@ class IssueService:
                     f"- Issue: `{repo_full_name}#{issue_number}`",
                     f"- Job: `{job_id}`",
                 ]
+                if token_usage and int(token_usage.get("total_tokens") or 0) > 0:
+                    lines.append(f"- Tokens: `{int(token_usage['total_tokens'])}`")
                 if pr_url:
                     lines.append(f"- PR: `{pr_url}`")
                 if result_summary:
@@ -795,6 +1047,8 @@ class IssueService:
                     f"- Issue: `{repo_full_name}#{issue_number}`",
                     f"- Job: `{job_id}`",
                 ]
+                if token_usage and int(token_usage.get("total_tokens") or 0) > 0:
+                    lines.append(f"- Tokens: `{int(token_usage['total_tokens'])}`")
                 if result_summary:
                     lines.extend(["", short_text(result_summary, 3000)])
             else:
@@ -803,10 +1057,10 @@ class IssueService:
                     f"{service_actor_name()} 执行失败。",
                     f"- Issue: `{repo_full_name}#{issue_number}`",
                     f"- Job: `{job_id}`",
-                    "",
-                    "错误摘要：",
-                    summary,
                 ]
+                if token_usage and int(token_usage.get("total_tokens") or 0) > 0:
+                    lines.append(f"- Tokens: `{int(token_usage['total_tokens'])}`")
+                lines.extend(["", "错误摘要：", summary])
 
             self.feishu_reply_in_thread(root_message_id, "\n".join(lines).strip())
         except Exception as exc:
@@ -834,6 +1088,43 @@ class IssueService:
         if not handoff_prompt:
             return None
 
+        latest_user_message = recent_messages[-1] if recent_messages else None
+        model_command = parse_feishu_model_command(str((latest_user_message or {}).get("content") or ""))
+        if model_command is not None:
+            if model_command and model_command not in SUPPORTED_CODEX_MODELS:
+                allowed_models = ", ".join(SUPPORTED_CODEX_MODELS)
+                response_text = (
+                    f"[Coder] 不支持模型 `{model_command}`。\n\n"
+                    f"当前可用模型：{allowed_models}\n"
+                    "发送 `/model default` 可恢复到系统默认模型。"
+                )
+            else:
+                selected_model = model_command or None
+                session_row = self.upsert_issue_session(
+                    repo_full_name,
+                    issue_number,
+                    selected_model=selected_model,
+                    clear_selected_model=selected_model is None,
+                    summary=(
+                        f"selected model: {selected_model}"
+                        if selected_model
+                        else "selected model reset to default"
+                    ),
+                    last_result_status="waiting_confirm",
+                )
+                effective_model = selected_model or str(self.config.get("codex_model") or "").strip() or "(default)"
+                response_text = (
+                    f"[Coder] 当前 issue 模型已设置为 `{effective_model}`。"
+                    if selected_model
+                    else f"[Coder] 当前 issue 已恢复使用默认模型 `{effective_model}`。"
+                )
+
+            root_message_id = str(binding["root_message_id"] or "").strip() or str(binding["prompt_message_id"] or "").strip()
+            if not root_message_id:
+                raise RuntimeError(f"Feishu binding missing root_message_id for {repo_full_name}#{issue_number}")
+            self.feishu_reply_in_thread(root_message_id, response_text)
+            return str(session_row["agent_session_id"] or "").strip() or None
+
         prompt = self.build_feishu_discussion_prompt(
             repo_full_name,
             issue_number,
@@ -841,12 +1132,18 @@ class IssueService:
             handoff_prompt,
             recent_messages,
         )
-        turn = worker_module.run_openclaw_chat_turn(
+        discussion_dir = worker_module.repo_checkout_dir(self.config, repo_full_name, issue_number)
+        if not (discussion_dir / ".git").exists():
+            discussion_dir = openclaw_issue_workspace_dir(self.config, repo_full_name, issue_number)
+        turn = worker_module.run_discussion_turn(
             self.config,
             repo_full_name,
             issue_number,
+            discussion_dir,
             prompt,
             str(session_row["session_key"]),
+            agent_session_id=str(session_row["agent_session_id"] or "").strip() or None,
+            selected_model=str(session_row["selected_model"] or "").strip() or None,
         )
         response_text = str(turn["text"])
         agent_session_id = str(turn["agent_session_id"] or "").strip() or None
@@ -867,6 +1164,21 @@ class IssueService:
 
     def get_job(self, job_id: str) -> sqlite3.Row | None:
         return db_module.get_job(self.config, job_id)
+
+    def job_payload(self, job_id: str) -> dict[str, Any] | None:
+        row = self.get_job(job_id)
+        if row is None:
+            return None
+        return self.job_payload_from_row(row)
+
+    def job_payload_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        payload = dict(row)
+        job_dir = str(row["job_dir"] or "").strip()
+        if job_dir:
+            payload["token_usage"] = worker_module.read_job_token_usage(Path(job_dir))
+        else:
+            payload["token_usage"] = None
+        return payload
 
     def mark_job_running(self, job_id: str, pid: int) -> None:
         db_module.mark_job_running(self.config, job_id, pid)
@@ -969,6 +1281,7 @@ class IssueService:
             (repo_full_name, issue_number),
         )
         bindings = self.list_issue_bindings(repo_full_name, issue_number)
+        jobs = self.list_issue_jobs(repo_full_name, issue_number)
         return {
             "repo_full_name": repo_full_name,
             "issue_number": issue_number,
@@ -981,6 +1294,8 @@ class IssueService:
             },
             "bindings": [dict(row) for row in bindings],
             "binding_count": len(bindings),
+            "jobs": [self.job_payload_from_row(row) for row in jobs],
+            "job_count": len(jobs),
         }
 
 

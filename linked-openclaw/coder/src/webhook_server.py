@@ -16,10 +16,7 @@ class WebhookContext:
     config: dict[str, Any]
     runtime: dict[str, Any]
     issue_service: IssueService
-    validate_signature: Callable[[str, bytes, str | None], bool]
     repo_allowed: Callable[[str], bool]
-    webhook_decision: Callable[[dict[str, Any], str], tuple[bool, str]]
-    queue_payload: Callable[[dict[str, Any], str], str]
     queue_stats: Callable[[], dict[str, int]]
 
 
@@ -37,8 +34,7 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
                 "service": "coder-issue-bot",
                 "status": "ok",
                 "time": now_utc(),
-                "endpoint": "/github/webhook",
-                "poll_enabled": context.config.get("poll_enabled"),
+                "entrypoint": "feishu issue commands",
             }
         )
 
@@ -53,20 +49,13 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
                 "data_dir": context.config.get("data_dir"),
                 "openclaw_config_path": context.config.get("openclaw_config_path"),
                 "openclaw_runtime_config_path": context.config.get("openclaw_runtime_config_path"),
-                "webhook_enabled": context.config.get("webhook_enabled"),
                 "allowed_repos": context.config.get("allowed_repos"),
                 "execution_backend": context.config.get("execution_backend"),
                 "backend_label": backend_label(context.config),
                 "backend_model": backend_model_label(context.config),
-                "trigger_comment": context.config.get("trigger_comment"),
-                "poll_enabled": context.config.get("poll_enabled"),
-                "poll_interval_seconds": context.config.get("poll_interval_seconds"),
                 "dispatch_interval_seconds": context.config.get("dispatch_interval_seconds"),
                 "submit_comment_after_pr": context.config.get("submit_comment_after_pr"),
                 "submit_comment_body": context.config.get("submit_comment_body"),
-                "last_poll_started_at": context.runtime.get("last_poll_started_at"),
-                "last_poll_completed_at": context.runtime.get("last_poll_completed_at"),
-                "last_poll_error": context.runtime.get("last_poll_error"),
                 "last_queued_job_id": context.runtime.get("last_queued_job_id"),
                 "last_dispatched_job_id": context.runtime.get("last_dispatched_job_id"),
                 "queue": context.queue_stats(),
@@ -78,6 +67,14 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
         context = current_context()
         repo_full_name = f"{owner}/{repo}"
         return jsonify(context.issue_service.issue_session_payload(repo_full_name, issue_number))
+
+    @app.get("/jobs/<job_id>")
+    def job_view(job_id: str) -> Any:
+        context = current_context()
+        job = context.issue_service.job_payload(job_id)
+        if job is None:
+            return jsonify({"ok": False, "error": "job not found"}), 404
+        return jsonify({"ok": True, "job": job})
 
     @app.post("/feishu/bind")
     def feishu_bind() -> Any:
@@ -110,12 +107,13 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "issue_number must be an integer"}), 400
 
-        worker_module.ensure_openclaw_issue_agent(
-            context.config,
-            repo_full_name,
-            issue_number,
-            openclaw_issue_workspace_dir(context.config, repo_full_name, issue_number),
-        )
+        if context.config.get("execution_backend") == "openclaw":
+            worker_module.ensure_openclaw_issue_agent(
+                context.config,
+                repo_full_name,
+                issue_number,
+                openclaw_issue_workspace_dir(context.config, repo_full_name, issue_number),
+            )
         context.issue_service.upsert_issue_session(
             repo_full_name,
             issue_number,
@@ -214,53 +212,6 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
             last_result_status=str(payload.get("last_result_status") or "").strip() or None,
         )
         return jsonify({"ok": True, "session": context.issue_service.issue_session_payload(repo_full_name, issue_number)})
-
-    @app.post("/github/webhook")
-    def github_webhook() -> Any:
-        context = current_context()
-        if not context.config.get("webhook_enabled", True):
-            return jsonify({"ok": False, "error": "webhook disabled"}), 404
-
-        raw_body = request.get_data()
-        signature = request.headers.get("X-Hub-Signature-256")
-        if not context.validate_signature(context.config["webhook_secret"], raw_body, signature):
-            return jsonify({"ok": False, "error": "invalid signature"}), 401
-
-        event_name = request.headers.get("X-GitHub-Event", "")
-        delivery_id = request.headers.get("X-GitHub-Delivery", "")
-        if delivery_id and not context.issue_service.record_delivery_once(delivery_id, event_name):
-            return jsonify({"ok": True, "ignored": "duplicate delivery", "delivery_id": delivery_id}), 200
-
-        payload = request.get_json(silent=True) or {}
-        if event_name == "ping":
-            return jsonify({"ok": True, "event": "ping"}), 200
-
-        repo_full_name = payload.get("repository", {}).get("full_name", "")
-        issue = payload.get("issue") or {}
-        issue_number = issue.get("number")
-        if not repo_full_name or issue_number is None:
-            return jsonify({"ok": True, "ignored": "missing repository or issue"}), 200
-        if not context.repo_allowed(repo_full_name):
-            return jsonify({"ok": True, "ignored": "repo not allowed", "repo": repo_full_name}), 200
-
-        if event_name == "issues" and payload.get("action") == "closed":
-            context.issue_service.handle_issue_closed(repo_full_name, issue)
-            return jsonify({"ok": True, "handled": "issue closed"}), 200
-
-        if event_name == "issues" and payload.get("action") == "reopened":
-            context.issue_service.upsert_issue_record(
-                repo_full_name,
-                int(issue_number),
-                issue.get("title") or f"Issue #{issue_number}",
-                "open",
-            )
-
-        should_run, reason = context.webhook_decision(payload, event_name)
-        if not should_run:
-            return jsonify({"ok": True, "ignored": reason}), 200
-
-        trigger_id = context.queue_payload(payload, reason)
-        return jsonify({"ok": True, "triggered": True, "trigger_id": trigger_id, "reason": reason}), 202
 
     return app
 

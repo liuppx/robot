@@ -3,7 +3,12 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { appendAuditLog } from "../../tools/lib/audit_log.mjs";
-import { loadPolicy, normalizeRepoInput, normalizeText, workspaceRootFromHook } from "../../tools/lib/common.mjs";
+import {
+  loadPolicy,
+  normalizeText,
+  resolveGitHubRepoFromPolicy,
+  workspaceRootFromHook
+} from "../../tools/lib/common.mjs";
 import { sendFeishuTextForEvent } from "../../tools/lib/feishu_reply.mjs";
 import { buildCommandsSection, buildRepoAliasesSection } from "../../tools/lib/issuer_capabilities.mjs";
 
@@ -180,21 +185,15 @@ ${issue.htmlUrl || issue.issueUrl || ""}`.trim();
 ${issue.htmlUrl}`;
 }
 
-function resolveRepoArgument(policy, argument) {
+function resolveRepoArgument(workspaceRoot, policy, argument) {
   const raw = String(argument || "").trim();
   if (!raw) {
     return "";
   }
 
-  const aliases = Array.isArray(policy?.repoAliases) ? policy.repoAliases.filter(Boolean) : [];
-  const byAlias = aliases.find((item) => String(item.alias || "").toLowerCase() === raw.toLowerCase());
-  if (byAlias?.owner && byAlias?.repo) {
-    return `${byAlias.owner}/${byAlias.repo}`;
-  }
-
-  const normalized = normalizeRepoInput(raw);
-  if (normalized?.owner && normalized?.repo) {
-    return `${normalized.owner}/${normalized.repo}`;
+  const resolved = resolveGitHubRepoFromPolicy(policy, raw, { workspaceRoot });
+  if (resolved?.owner && resolved?.repo) {
+    return `${resolved.owner}/${resolved.repo}`;
   }
 
   return raw;
@@ -251,6 +250,20 @@ function buildNotFoundMessage(actionLabel, targetArgument, available) {
   return lines.join("\n");
 }
 
+function statusConflictMessage(action, payload) {
+  const status = String(payload?.current?.status || "").trim().toLowerCase();
+  if (status === "executing") {
+    return action === "cancel" ? "草案正在执行，不能取消。请等待执行结果。" : "草案正在执行，请不要重复确认。";
+  }
+  if (status === "done") {
+    return action === "cancel" ? "草案已执行完成，不能再取消。" : "草案已经执行完成，不需要重复确认。";
+  }
+  if (status === "cancelled") {
+    return action === "cancel" ? "草案已经取消，无需重复操作。" : "草案已经取消，不能再确认。";
+  }
+  return action === "cancel" ? "取消失败，请刷新后重试。" : "确认失败，请刷新后重试。";
+}
+
 function helpTemplatePath(workspaceRoot) {
   return path.join(workspaceRoot, "hooks", "confirmation-bridge", "help.template.md");
 }
@@ -296,7 +309,7 @@ function resolveCommandTarget(policy, argument) {
   }
 
   return {
-    repoQuery: resolveRepoArgument(policy, argument),
+    repoQuery: resolveRepoArgument(workspaceRootFromHook(import.meta.url), policy, argument),
     draftQuery: ""
   };
 }
@@ -478,6 +491,10 @@ const handler = async (event) => {
       )
     );
     if (!cleared?.ok) {
+      if (cleared?.error === "not_pending" && cleared?.current) {
+        await reply(workspaceRoot, event, statusConflictMessage("cancel", cleared));
+        return;
+      }
       auditHook(workspaceRoot, "hook.cancel.clear_failed", {
         scope,
         sender,
@@ -508,6 +525,10 @@ const handler = async (event) => {
     )
   );
   if (!executed?.ok) {
+    if (executed?.error === "not_pending" && executed?.current) {
+      await reply(workspaceRoot, event, statusConflictMessage("confirm", executed));
+      return;
+    }
     auditHook(workspaceRoot, "hook.confirm.execute_failed", {
       scope,
       sender,

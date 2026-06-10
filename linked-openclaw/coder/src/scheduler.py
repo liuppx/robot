@@ -17,15 +17,14 @@ from src.clients.feishu_client import (
     feishu_group_message_scope_missing,
     feishu_message_marker_is_newer,
     message_matches_confirm_keywords,
+    resolve_feishu_runtime_settings,
 )
-from src.clients.github_client import get_installation_token, list_issue_comments, list_open_issues
-from src.utils.helpers import ensure_dir, newer_utc_timestamp, now_utc, shift_utc_timestamp, short_text
+from src.utils.helpers import ensure_dir, now_utc, short_text
 
 
 ACTIVE_JOB_STATUSES = ("queued", "running")
 STATE_LOCK = threading.Lock()
 DISPATCH_THREAD: threading.Thread | None = None
-POLLING_THREAD: threading.Thread | None = None
 
 
 @dataclass
@@ -37,6 +36,7 @@ class SchedulerContext:
     issue_has_active_job: Callable[[str, int], bool]
     upsert_feishu_binding: Callable[..., sqlite3.Row]
     upsert_issue_session: Callable[..., sqlite3.Row]
+    handle_feishu_chat_command: Callable[[str, dict[str, Any]], bool]
     reply_issue_discussion_to_feishu: Callable[..., str | None]
     confirm_feishu_binding_and_queue: Callable[[dict[str, Any], sqlite3.Row, dict[str, Any]], tuple[str, bool]]
 
@@ -76,6 +76,10 @@ def normalize_state(state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(issues, dict):
         poll_cache["issues"] = {}
 
+    feishu_chats = poll_cache.get("feishu_chats")
+    if not isinstance(feishu_chats, dict):
+        poll_cache["feishu_chats"] = {}
+
     return state
 
 
@@ -100,6 +104,17 @@ def poll_cache_issue_state(state: dict[str, Any], repo_full_name: str, issue_num
         issue_state = {}
         issues[issue_key] = issue_state
     return issue_state
+
+
+def poll_cache_feishu_chat_state(state: dict[str, Any], chat_id: str) -> dict[str, Any]:
+    normalized = normalize_state(state)
+    poll_cache = normalized["poll_cache"]
+    chats = poll_cache["feishu_chats"]
+    chat_state = chats.get(chat_id)
+    if not isinstance(chat_state, dict):
+        chat_state = {}
+        chats[chat_id] = chat_state
+    return chat_state
 
 
 def poll_cache_issue_key(repo_full_name: str, issue_number: int) -> str:
@@ -176,35 +191,6 @@ def trigger_key(repo_full_name: str, issue_number: int, kind: str, value: str) -
     return f"{repo_full_name}#{issue_number}:{kind}:{value}"
 
 
-def issue_comment_matches_trigger(payload: dict[str, Any], trigger_comment: str) -> bool:
-    issue = payload.get("issue") or {}
-    if not isinstance(issue, dict):
-        issue = {}
-    if issue.get("pull_request"):
-        return False
-    comment = payload.get("comment") or {}
-    if not isinstance(comment, dict):
-        comment = {}
-    return message_matches_confirm_keywords(str(comment.get("body") or ""), [trigger_comment])
-
-
-def build_payload(
-    repo_full_name: str,
-    issue: dict[str, Any],
-    *,
-    action: str,
-    label_name: str | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "action": action,
-        "repository": {"full_name": repo_full_name},
-        "issue": issue,
-    }
-    if label_name is not None:
-        payload["label"] = {"name": label_name}
-    return payload
-
-
 def repo_has_running_job(config: dict[str, Any], repo_full_name: str) -> bool:
     row = db_module.fetchone(
         config,
@@ -254,6 +240,61 @@ def recover_inflight_jobs(context: SchedulerContext, *, source: str = "service s
             str(row["job_id"]),
             f"worker process missing; re-queued on {source}",
         )
+
+
+def scan_feishu_chat_commands(context: SchedulerContext) -> None:
+    try:
+        settings = resolve_feishu_runtime_settings(context.config)
+    except Exception:
+        return
+
+    state = load_state(context.config)
+    state_changed = False
+    chat_ids = [
+        str(item).strip()
+        for item in (settings.get("chat_ids") or [])
+        if str(item).strip()
+    ]
+    for chat_id in chat_ids:
+        chat_state = poll_cache_feishu_chat_state(state, chat_id)
+        last_seen_id = str(chat_state.get("last_seen_message_id") or "").strip()
+        last_seen_time = str(chat_state.get("last_seen_message_time") or "").strip()
+
+        try:
+            messages = feishu_module.feishu_list_chat_messages(
+                context.config,
+                context.runtime,
+                chat_id,
+                context.config["feishu_chat_scan_limit"],
+            )
+        except Exception as exc:
+            print(
+                f"warning: failed to scan Feishu chat commands for "
+                f"{chat_id}: {short_text(str(exc), 1200)}"
+            )
+            continue
+
+        newest_seen_id = last_seen_id
+        newest_seen_time = last_seen_time
+        for message in messages:
+            if not feishu_message_marker_is_newer(message, last_seen_time, last_seen_id):
+                continue
+            newest_seen_id = str(message.get("message_id") or newest_seen_id)
+            newest_seen_time = str(message.get("create_time") or newest_seen_time)
+            if str(message.get("sender_type") or "").strip().lower() != "user":
+                continue
+            try:
+                context.handle_feishu_chat_command(chat_id, message)
+            except Exception as exc:
+                print(
+                    f"warning: failed to handle Feishu chat command for "
+                    f"{chat_id}: {short_text(str(exc), 1200)}"
+                )
+
+        state_changed |= state_set(chat_state, "last_seen_message_id", newest_seen_id or None)
+        state_changed |= state_set(chat_state, "last_seen_message_time", newest_seen_time or None)
+    if state_changed:
+        save_state(context.config, state)
 
 
 def scan_waiting_feishu_confirmations(context: SchedulerContext) -> None:
@@ -360,43 +401,43 @@ def scan_waiting_feishu_confirmations(context: SchedulerContext) -> None:
             discussion_messages.append(message)
 
         if discussion_messages:
-            for message in discussion_messages:
-                try:
-                    visible_messages = []
-                    for item in messages:
-                        visible_messages.append(item)
-                        if str(item.get("message_id") or "") == str(message.get("message_id") or ""):
-                            break
-                    context.reply_issue_discussion_to_feishu(
-                        context.config,
-                        repo_full_name,
-                        issue_number,
-                        binding=binding,
-                        recent_messages=visible_messages,
-                    )
-                except Exception as exc:
-                    error_summary = short_text(str(exc), 1500)
-                    print(
-                        f"warning: failed to proxy Feishu discussion for "
-                        f"{repo_full_name}#{issue_number}: {error_summary}"
-                    )
-                    root_message_id = (
-                        str(binding["root_message_id"] or "").strip()
-                        or str(binding["prompt_message_id"] or "").strip()
-                    )
-                    if root_message_id:
-                        try:
-                            feishu_module.feishu_reply_in_thread(
-                                context.config,
-                                context.runtime,
-                                root_message_id,
-                                f"讨论阶段回复失败，请稍后重试。\n\n错误摘要：{error_summary}",
-                            )
-                        except Exception as reply_exc:
-                            print(
-                                f"warning: failed to post discussion error reply for "
-                                f"{repo_full_name}#{issue_number}: {reply_exc}"
-                            )
+            latest_message = discussion_messages[-1]
+            try:
+                visible_messages = []
+                for item in messages:
+                    visible_messages.append(item)
+                    if str(item.get("message_id") or "") == str(latest_message.get("message_id") or ""):
+                        break
+                context.reply_issue_discussion_to_feishu(
+                    context.config,
+                    repo_full_name,
+                    issue_number,
+                    binding=binding,
+                    recent_messages=visible_messages,
+                )
+            except Exception as exc:
+                error_summary = short_text(str(exc), 1500)
+                print(
+                    f"warning: failed to proxy Feishu discussion for "
+                    f"{repo_full_name}#{issue_number}: {error_summary}"
+                )
+                root_message_id = (
+                    str(binding["root_message_id"] or "").strip()
+                    or str(binding["prompt_message_id"] or "").strip()
+                )
+                if root_message_id:
+                    try:
+                        feishu_module.feishu_reply_in_thread(
+                            context.config,
+                            context.runtime,
+                            root_message_id,
+                            f"讨论阶段回复失败，请稍后重试。\n\n错误摘要：{error_summary}",
+                        )
+                    except Exception as reply_exc:
+                        print(
+                            f"warning: failed to post discussion error reply for "
+                            f"{repo_full_name}#{issue_number}: {reply_exc}"
+                        )
 
         if confirm_message is None:
             if newest_seen_id != str(binding["last_seen_message_id"] or "").strip() or newest_seen_time != str(
@@ -457,6 +498,7 @@ def dispatch_loop(context: SchedulerContext) -> None:
     while True:
         try:
             recover_inflight_jobs(context, source="dispatch loop")
+            scan_feishu_chat_commands(context)
             scan_waiting_feishu_confirmations(context)
             dispatch_queued_jobs(context)
         except Exception as exc:
@@ -475,187 +517,6 @@ def start_dispatch_thread(context: SchedulerContext) -> None:
         daemon=True,
     )
     DISPATCH_THREAD.start()
-
-
-def detect_poll_trigger(
-    context: SchedulerContext,
-    repo_full_name: str,
-    issue: dict[str, Any],
-    state: dict[str, Any],
-    token: str,
-    owner: str,
-    repo: str,
-) -> tuple[tuple[dict[str, Any], str, str] | None, bool, bool]:
-    issue_number = int(issue["number"])
-    processed = state.setdefault("processed_triggers", {})
-    if worker_module.active_lock_path(context.config, repo_full_name, issue_number).exists():
-        return None, False, True
-    if context.issue_has_active_job(repo_full_name, issue_number):
-        return None, False, True
-
-    state_changed = False
-    issue_cache = poll_cache_issue_state(state, repo_full_name, issue_number)
-    latest_comment_created_at = str(issue_cache.get("last_comment_created_at") or "")
-    comment_count = int(issue.get("comments") or 0)
-    if comment_count <= 0 and not latest_comment_created_at:
-        return None, state_changed, False
-    comment_since = (
-        shift_utc_timestamp(latest_comment_created_at, seconds=-1)
-        if latest_comment_created_at
-        else None
-    )
-    comments = list_issue_comments(
-        context.config,
-        token,
-        owner,
-        repo,
-        issue_number,
-        since=comment_since,
-    )
-    for comment in comments:
-        latest_comment_created_at = (
-            newer_utc_timestamp(latest_comment_created_at, str(comment.get("created_at") or ""))
-            or latest_comment_created_at
-        )
-        comment_id = str(comment.get("id") or "").strip()
-        if not comment_id:
-            continue
-        key = trigger_key(repo_full_name, issue_number, "comment", comment_id)
-        if key in processed:
-            continue
-        user_type = str(((comment.get("user") or {}).get("type")) or "").strip().lower()
-        if user_type == "bot":
-            continue
-        if not message_matches_confirm_keywords(str(comment.get("body") or ""), [context.config["trigger_comment"]]):
-            continue
-        if latest_comment_created_at:
-            state_changed |= state_set(issue_cache, "last_comment_created_at", latest_comment_created_at)
-        payload: dict[str, Any] = {
-            "action": "created",
-            "repository": {"full_name": repo_full_name},
-            "issue": issue,
-            "comment": comment,
-        }
-        return (payload, f"poll.issue_comment:{context.config['trigger_comment']}", key), state_changed, False
-
-    if latest_comment_created_at:
-        state_changed |= state_set(issue_cache, "last_comment_created_at", latest_comment_created_at)
-    return None, state_changed, False
-
-
-def poll_once(context: SchedulerContext) -> None:
-    if not context.config["poll_enabled"] or not context.config["allowed_repos"]:
-        return
-
-    context.runtime["last_poll_started_at"] = now_utc()
-    context.runtime["last_poll_error"] = None
-    state = load_state(context.config)
-    state_changed = False
-    token = get_installation_token(context.config)
-
-    for repo_full_name in context.config["allowed_repos"]:
-        owner, repo = repo_full_name.split("/", 1)
-        repo_state = poll_cache_repo_state(state, repo_full_name)
-
-        use_incremental = not bool(repo_state.get("force_full_scan"))
-        issues_since = None
-        issues_etag = None
-        issues_etag_key = ""
-        if use_incremental:
-            issues_since = shift_utc_timestamp(
-                str(repo_state.get("last_issue_updated_at") or "") or None,
-                seconds=-1,
-            )
-            issues_etag_key = issues_since or ""
-            if str(repo_state.get("issues_etag_key") or "") == issues_etag_key:
-                issues_etag = str(repo_state.get("issues_etag") or "") or None
-
-        issues, latest_etag, not_modified = list_open_issues(
-            context.config,
-            token,
-            owner,
-            repo,
-            since=issues_since,
-            etag=issues_etag,
-        )
-        if not_modified:
-            continue
-
-        if use_incremental:
-            state_changed |= state_set(repo_state, "issues_etag_key", issues_etag_key)
-            state_changed |= state_set(repo_state, "issues_etag", latest_etag)
-
-        repo_latest_updated_at = str(repo_state.get("last_issue_updated_at") or "")
-        repo_needs_full_scan = False
-        for issue in issues:
-            if issue.get("pull_request"):
-                continue
-            decision, issue_state_changed, issue_requests_rescan = detect_poll_trigger(
-                context,
-                repo_full_name,
-                issue,
-                state,
-                token,
-                owner,
-                repo,
-            )
-            state_changed |= issue_state_changed
-            if issue_requests_rescan:
-                repo_needs_full_scan = True
-            else:
-                repo_latest_updated_at = newer_utc_timestamp(
-                    repo_latest_updated_at,
-                    str(issue.get("updated_at") or ""),
-                ) or repo_latest_updated_at
-            if not decision:
-                continue
-            payload, reason, key = decision
-            queue_payload(context, payload, reason)
-            state.setdefault("processed_triggers", {})[key] = now_utc()
-            state_changed = True
-
-        if repo_needs_full_scan:
-            state_changed |= state_set(repo_state, "force_full_scan", True)
-            continue
-
-        state_changed |= state_set(repo_state, "force_full_scan", False)
-        if repo_latest_updated_at:
-            state_changed |= state_set(repo_state, "last_issue_updated_at", repo_latest_updated_at)
-        if not use_incremental:
-            state_changed |= state_set(repo_state, "issues_etag_key", None)
-            state_changed |= state_set(repo_state, "issues_etag", None)
-
-    if state_changed:
-        save_state(context.config, state)
-    context.runtime["last_poll_completed_at"] = now_utc()
-
-
-def poll_loop(context: SchedulerContext) -> None:
-    interval = max(15, context.config["poll_interval_seconds"])
-    print(f"polling enabled: every {interval}s for {context.config['allowed_repos']}")
-    while True:
-        try:
-            poll_once(context)
-        except Exception as exc:
-            context.runtime["last_poll_error"] = short_text(str(exc), 1200)
-            print(f"polling error: {exc}")
-        time.sleep(interval)
-
-
-def start_polling_thread(context: SchedulerContext) -> None:
-    global POLLING_THREAD
-    if not context.config["poll_enabled"]:
-        print("polling disabled")
-        return
-    if POLLING_THREAD and POLLING_THREAD.is_alive():
-        return
-    POLLING_THREAD = threading.Thread(
-        target=poll_loop,
-        args=(context,),
-        name="github-poller",
-        daemon=True,
-    )
-    POLLING_THREAD.start()
 
 
 def queue_stats(config: dict[str, Any]) -> dict[str, int]:
@@ -677,10 +538,7 @@ __all__ = [
     "default_state",
     "dispatch_loop",
     "dispatch_queued_jobs",
-    "issue_comment_matches_trigger",
     "load_state",
-    "poll_loop",
-    "poll_once",
     "queue_stats",
     "recover_inflight_jobs",
     "remove_issue_from_state",
@@ -688,5 +546,4 @@ __all__ = [
     "save_state",
     "session_allows_feishu_followup",
     "start_dispatch_thread",
-    "start_polling_thread",
 ]

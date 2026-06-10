@@ -126,6 +126,120 @@ export function loadPolicy(workspaceRoot) {
   return readJsonIfExists(fallback, {}) || {};
 }
 
+function parseSimpleEnvFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const parsed = {};
+  for (const rawLine of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const index = line.indexOf("=");
+    if (index <= 0) {
+      continue;
+    }
+    const key = line.slice(0, index).trim();
+    let value = line.slice(index + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[key] = value;
+  }
+
+  return parsed;
+}
+
+export function loadGitHubRepoDefaults(workspaceRoot) {
+  const appRoot = appRootFromWorkspaceRoot(workspaceRoot);
+  const envFile =
+    process.env.GITHUB_APP_ENV_FILE ||
+    process.env.GITHUB_ENV_FILE ||
+    path.join(appRoot, "config", "github-app.config.env");
+  const parsed = parseSimpleEnvFile(envFile);
+  const owner =
+    process.env.GITHUB_DEFAULT_OWNER ||
+    process.env.GITHUB_OWNER ||
+    parsed.GITHUB_DEFAULT_OWNER ||
+    parsed.GITHUB_OWNER ||
+    "";
+  const repo =
+    process.env.GITHUB_DEFAULT_REPO ||
+    process.env.GITHUB_REPO ||
+    parsed.GITHUB_DEFAULT_REPO ||
+    parsed.GITHUB_REPO ||
+    "";
+
+  return {
+    owner: String(owner || "").trim(),
+    repo: String(repo || "").trim()
+  };
+}
+
+function normalizedAliasValues(entry) {
+  const values = [];
+  if (entry?.alias) {
+    values.push(entry.alias);
+  }
+  if (Array.isArray(entry?.aliases)) {
+    values.push(...entry.aliases);
+  }
+  if (entry?.login) {
+    values.push(entry.login);
+  }
+  return values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+}
+
+export function resolveGitHubLoginFromPolicy(policy, value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const normalized = raw.toLowerCase();
+  const aliases = Array.isArray(policy?.githubUserAliases) ? policy.githubUserAliases : [];
+  for (const entry of aliases) {
+    const login = String(entry?.login || "").trim();
+    if (!login) {
+      continue;
+    }
+    if (normalizedAliasValues(entry).some((item) => item.toLowerCase() === normalized)) {
+      return login;
+    }
+  }
+
+  return raw;
+}
+
+export function resolveGitHubAssigneesFromPolicy(policy, { assignees = [], followOwner } = {}) {
+  const explicit = Array.isArray(assignees) ? assignees : [];
+  const values = explicit.length > 0 ? explicit : followOwner ? [followOwner] : [];
+  const resolved = [];
+  const seen = new Set();
+  const preserveUnknown = explicit.length > 0;
+
+  for (const value of values) {
+    const mapped = resolveGitHubLoginFromPolicy(policy, value);
+    const raw = String(value || "").trim();
+    const login = preserveUnknown || mapped !== raw ? mapped : "";
+    const normalized = login.toLowerCase();
+    if (!login || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    resolved.push(login);
+  }
+
+  return resolved;
+}
+
 // JWT 和文件名都要用安全字符集，所以统一转成 base64url。
 export function base64UrlEncode(value) {
   const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
@@ -178,6 +292,64 @@ export function normalizeRepoInput(value) {
   }
 
   return null;
+}
+
+export function resolveGitHubRepoFromPolicy(policy, value, { workspaceRoot } = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  const aliases = Array.isArray(policy?.repoAliases) ? policy.repoAliases : [];
+  const normalizedRaw = raw.toLowerCase();
+  for (const entry of aliases) {
+    const owner = String(entry?.owner || "").trim();
+    const repo = String(entry?.repo || "").trim();
+    if (!owner || !repo) {
+      continue;
+    }
+
+    const values = [];
+    if (entry?.alias) {
+      values.push(entry.alias);
+    }
+    if (Array.isArray(entry?.aliases)) {
+      values.push(...entry.aliases);
+    }
+    if (values.some((item) => String(item || "").trim().toLowerCase() === normalizedRaw)) {
+      return {
+        owner,
+        repo,
+        repoKey: repoKeyFromParts(owner, repo)
+      };
+    }
+  }
+
+  const normalized = normalizeRepoInput(raw);
+  if (normalized?.owner && normalized?.repo) {
+    return normalized;
+  }
+
+  const bareRepo = raw.match(/^([^/\s]+?)(?:\.git)?$/);
+  if (!bareRepo) {
+    return null;
+  }
+
+  const repo = String(bareRepo[1] || "").trim();
+  if (!repo) {
+    return null;
+  }
+
+  const defaults = workspaceRoot ? loadGitHubRepoDefaults(workspaceRoot) : { owner: "", repo: "" };
+  if (!defaults.owner) {
+    return null;
+  }
+
+  return {
+    owner: defaults.owner,
+    repo,
+    repoKey: repoKeyFromParts(defaults.owner, repo)
+  };
 }
 
 // 运行在 openclaw 内时优先读取当前实例的 state；否则回退到默认 home 目录。

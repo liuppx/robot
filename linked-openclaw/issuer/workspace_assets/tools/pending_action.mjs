@@ -14,14 +14,17 @@ import {
 } from "./lib/common.mjs";
 import {
   buildTargetFromParams,
+  cancelPendingEntry,
+  claimPendingEntryExecution,
+  completePendingEntryExecution,
   createOrReplacePendingEntry,
   dedupeEntries,
-  deletePendingEntry,
   entryMatchesDraftQuery,
   normalizeDraftQuery,
   entryMatchesRepoQuery,
   normalizeRepoQuery,
   readAllEntries,
+  releasePendingEntryExecution,
   requesterMatches,
   resolveEntries,
   scopeMatches,
@@ -171,6 +174,28 @@ function executionAuditPayload(parsed) {
   };
 }
 
+function printStatusConflict(root, action, scope, requester, repoQuery, draftQuery, transition) {
+  const current = transition?.current ? summarizePending(transition.current) : null;
+  auditPending(root, `pending.${action}.status_conflict`, {
+    scope,
+    requester,
+    repoQuery,
+    draftQuery,
+    current
+  });
+  printJson({
+    ok: false,
+    action,
+    scope,
+    requester,
+    repoQuery,
+    draftQuery,
+    error: transition?.error || "not_pending",
+    current
+  });
+  process.exit(1);
+}
+
 function printResolveFailure(root, action, scope, requester, repoQuery, draftQuery, resolved) {
   auditPending(root, `pending.${action}.${resolved.status}`, {
     scope,
@@ -235,6 +260,27 @@ function main() {
     };
 
     const created = createOrReplacePendingEntry(root, payload);
+    if (!created?.ok) {
+      auditPending(root, "pending.create.rejected", {
+        scope,
+        requester,
+        target,
+        kind,
+        headline,
+        current: created?.current ? summarizePending(created.current) : null,
+        error: created?.error || null
+      });
+      printJson({
+        ok: false,
+        action,
+        scope,
+        requester,
+        target,
+        error: created?.error || "slot_executing",
+        current: created?.current ? summarizePending(created.current) : null
+      });
+      process.exit(1);
+    }
     auditPending(root, "pending.create", {
       draft: summarizePending(created.entry),
       scope,
@@ -278,13 +324,16 @@ function main() {
 
   if (action === "clear") {
     const resolved = resolveSingleEntryOrExit(action, root, scope, requester, repoQuery, draftQuery);
-    deletePendingEntry(root, resolved.entry);
+    const cancelled = cancelPendingEntry(root, resolved.entry.draftId);
+    if (!cancelled?.ok) {
+      printStatusConflict(root, action, scope, requester, repoQuery, draftQuery, cancelled);
+    }
     auditPending(root, "pending.clear", {
       scope,
       requester,
       repoQuery,
       draftQuery,
-      draft: summarizePending(resolved.entry)
+      draft: summarizePending(cancelled.entry)
     });
     printJson({
       ok: true,
@@ -293,19 +342,23 @@ function main() {
       requester,
       repoQuery,
       draftQuery,
-      pending: summarizePending(resolved.entry)
+      pending: summarizePending(cancelled.entry)
     });
     return;
   }
 
   if (action === "execute") {
     const resolved = resolveSingleEntryOrExit(action, root, scope, requester, repoQuery, draftQuery);
-    const command = buildExecCommand(resolved.entry.kind, resolved.entry.params);
+    const claimed = claimPendingEntryExecution(root, resolved.entry.draftId);
+    if (!claimed?.ok) {
+      printStatusConflict(root, action, scope, requester, repoQuery, draftQuery, claimed);
+    }
+    const command = buildExecCommand(claimed.entry.kind, claimed.entry.params);
     const childEnv = {
       ...process.env
     };
-    if (Array.isArray(resolved.entry.attachments) && resolved.entry.attachments.length > 0) {
-      childEnv.ISSUER_INBOUND_ATTACHMENTS_JSON = JSON.stringify(resolved.entry.attachments);
+    if (Array.isArray(claimed.entry.attachments) && claimed.entry.attachments.length > 0) {
+      childEnv.ISSUER_INBOUND_ATTACHMENTS_JSON = JSON.stringify(claimed.entry.attachments);
     } else {
       delete childEnv.ISSUER_INBOUND_ATTACHMENTS_JSON;
     }
@@ -322,13 +375,16 @@ function main() {
     }
 
     if (result.status === 0 && parsed?.ok) {
-      deletePendingEntry(root, resolved.entry);
+      const completed = completePendingEntryExecution(root, claimed.entry.draftId);
+      if (!completed?.ok) {
+        printStatusConflict(root, action, scope, requester, repoQuery, draftQuery, completed);
+      }
       auditPending(root, "pending.execute.success", {
         scope,
         requester,
         repoQuery,
         draftQuery,
-        draft: summarizePending(resolved.entry),
+        draft: summarizePending(completed.entry),
         executed: executionAuditPayload(parsed)
       });
       printJson({
@@ -338,17 +394,20 @@ function main() {
         requester,
         repoQuery,
         draftQuery,
+        pending: summarizePending(completed.entry),
         executed: parsed
       });
       return;
     }
 
+    const released = releasePendingEntryExecution(root, claimed.entry.draftId);
     auditPending(root, "pending.execute.failure", {
       scope,
       requester,
       repoQuery,
       draftQuery,
-      draft: summarizePending(resolved.entry),
+      draft: summarizePending(claimed.entry),
+      releasedToPending: !!released?.ok,
       executed: executionAuditPayload(parsed)
     });
     printJson({
@@ -358,6 +417,13 @@ function main() {
       requester,
       repoQuery,
       draftQuery,
+      error:
+        parsed?.error ||
+        parsed?.executed?.error ||
+        parsed?.response?.message ||
+        parsed?.executed?.response?.message ||
+        "execute_failed",
+      pending: released?.ok ? summarizePending(released.entry) : null,
       executed: parsed
     });
     process.exit(1);
@@ -366,8 +432,8 @@ function main() {
   if (action === "list") {
     const entries = dedupeEntries(
       readAllEntries(root).filter((entry) => {
-        if (args.all === "true") {
-          return true;
+        if (args.all !== "true" && entry.status !== "pending") {
+          return false;
         }
         if (!scopeMatches(entry.scope, scope)) {
           return false;

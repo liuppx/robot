@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import hmac
 import threading
 from pathlib import Path
 from typing import Any
@@ -21,9 +19,6 @@ from src.webhook_server import WebhookContext, create_app
 CONFIG: dict[str, Any] = {}
 RUNTIME: dict[str, Any] = {
     "started_at": None,
-    "last_poll_started_at": None,
-    "last_poll_completed_at": None,
-    "last_poll_error": None,
     "last_queued_job_id": None,
     "last_dispatched_job_id": None,
 }
@@ -38,41 +33,9 @@ def issue_service() -> IssueService:
     return ISSUE_SERVICE
 
 
-def validate_signature(secret: str, body: bytes, signature: str | None) -> bool:
-    if not secret:
-        return True
-    if not signature or not signature.startswith("sha256="):
-        return False
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
 def repo_allowed(repo_full_name: str) -> bool:
     allowed = CONFIG["allowed_repos"]
     return not allowed or repo_full_name in allowed
-
-
-def webhook_decision(payload: dict[str, Any], event_name: str) -> tuple[bool, str]:
-    action = payload.get("action", "")
-    if event_name == "issue_comment" and action == "created":
-        if scheduler_module.issue_comment_matches_trigger(payload, CONFIG["trigger_comment"]):
-            return True, f"issue_comment.created:{CONFIG['trigger_comment']}"
-    return False, f"ignored:{event_name}.{action}"
-
-
-def queue_payload(payload: dict[str, Any], reason: str) -> str:
-    trigger_info = issue_service().record_issue_trigger(payload, reason)
-    action = "created" if trigger_info["session_state"] == "waiting_confirm" else "updated"
-    print(
-        f"{action} handoff for "
-        f"{trigger_info['repo_full_name']}#{trigger_info['issue_number']} "
-        f"(session={trigger_info['session_key']} state={trigger_info['session_state']})"
-    )
-    return str(trigger_info["session_key"])
 
 
 def _scheduler_context() -> scheduler_module.SchedulerContext:
@@ -89,6 +52,7 @@ def _scheduler_context() -> scheduler_module.SchedulerContext:
             issue_number,
             **kwargs,
         ),
+        handle_feishu_chat_command=lambda _chat_id, message: service.handle_feishu_chat_command(_chat_id, message),
         reply_issue_discussion_to_feishu=lambda _config, repo_full_name, issue_number, **kwargs: (
             service.reply_issue_discussion_to_feishu(repo_full_name, issue_number, **kwargs)
         ),
@@ -118,10 +82,7 @@ def _webhook_context() -> WebhookContext:
         config=CONFIG,
         runtime=RUNTIME,
         issue_service=issue_service(),
-        validate_signature=validate_signature,
         repo_allowed=repo_allowed,
-        webhook_decision=webhook_decision,
-        queue_payload=queue_payload,
         queue_stats=lambda: scheduler_module.queue_stats(CONFIG),
     )
 
@@ -157,7 +118,6 @@ def bootstrap_service(env_file: Path | None = None) -> None:
             return
         scheduler_module.recover_inflight_jobs(_scheduler_context())
         scheduler_module.start_dispatch_thread(_scheduler_context())
-        scheduler_module.start_polling_thread(_scheduler_context())
         SERVICE_BOOTSTRAPPED = True
 
 
@@ -170,7 +130,6 @@ def parse_args() -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("serve")
-    subparsers.add_parser("poll-once")
     subparsers.add_parser("doctor")
     subparsers.add_parser("prepare-openclaw-runtime")
     run_job = subparsers.add_parser("run-job")
@@ -202,12 +161,6 @@ def main() -> None:
         return
 
     initialize_runtime(env_file)
-
-    if args.command == "poll-once":
-        scheduler_module.recover_inflight_jobs(_scheduler_context())
-        scheduler_module.poll_once(_scheduler_context())
-        scheduler_module.dispatch_queued_jobs(_scheduler_context())
-        return
 
     if args.command == "run-job":
         worker_module.process_job(_worker_context(), args.job_id)

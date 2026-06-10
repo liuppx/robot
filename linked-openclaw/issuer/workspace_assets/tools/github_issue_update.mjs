@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 
-import { enrichIssueBodyWithLatestAttachments, parseArgs, parseCsv, printJson, required } from "./lib/common.mjs";
+import {
+  enrichIssueBodyWithLatestAttachments,
+  loadGitHubRepoDefaults,
+  loadPolicy,
+  parseArgs,
+  parseCsv,
+  printJson,
+  required,
+  resolveGitHubAssigneesFromPolicy,
+  workspaceRootFromTool
+} from "./lib/common.mjs";
 import { auditGitHubTool, summarizeIssuePayload } from "./lib/github_audit.mjs";
 import { enrichTextWithUploadedAttachments } from "./lib/github_attachments.mjs";
 import { resolveGitHubToken } from "./lib/github_app.mjs";
@@ -90,16 +100,19 @@ async function fetchIssueBody({ owner, repo, issueNumber, auth }) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const workspaceRoot = workspaceRootFromTool(import.meta.url);
+  const defaults = loadGitHubRepoDefaults(workspaceRoot);
   const execute = args.execute === "true";
   const fromUrl = args.issueUrl ? parseIssueUrl(args.issueUrl) : null;
   if (args.issueUrl && !fromUrl) {
     throw new Error("issueUrl must look like https://github.com/<owner>/<repo>/issues/<number>");
   }
 
-  const owner = args.owner || fromUrl?.owner || process.env.GITHUB_DEFAULT_OWNER || process.env.GITHUB_OWNER;
-  const repo = args.repo || fromUrl?.repo || process.env.GITHUB_DEFAULT_REPO || process.env.GITHUB_REPO;
+  const owner = args.owner || fromUrl?.owner || defaults.owner;
+  const repo = args.repo || fromUrl?.repo || defaults.repo;
   const issueNumber = parseIssueNumber(args, fromUrl);
   const followOwner = parseFollowOwnerUpdate(args.followOwner, args.clearFollowOwner);
+  const policy = loadPolicy(workspaceRoot);
 
   const payload = {};
   const attachments = [];
@@ -140,7 +153,14 @@ async function main() {
 
   const assignees = parseCsvUpdate(args.assignees, args.clearAssignees);
   if (assignees !== undefined) {
-    payload.assignees = assignees;
+    payload.assignees = resolveGitHubAssigneesFromPolicy(policy, {
+      assignees,
+      followOwner
+    });
+  } else if (followOwner !== undefined) {
+    payload.assignees = resolveGitHubAssigneesFromPolicy(policy, {
+      followOwner
+    });
   }
 
   if (Object.keys(payload).length === 0) {

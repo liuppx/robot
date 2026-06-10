@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS issue_sessions (
     repo_full_name TEXT NOT NULL,
     issue_number INTEGER NOT NULL,
     backend TEXT NOT NULL,
+    selected_model TEXT,
     session_key TEXT NOT NULL,
     session_state TEXT NOT NULL,
     last_trigger_reason TEXT,
@@ -125,6 +126,7 @@ REQUIRED_COLUMNS = {
         "repo_full_name",
         "issue_number",
         "backend",
+        "selected_model",
         "session_key",
         "session_state",
         "last_trigger_reason",
@@ -157,6 +159,11 @@ REQUIRED_COLUMNS = {
     },
 }
 
+OPTIONAL_COLUMN_DEFINITIONS = {
+    "issue_sessions": {
+        "selected_model": "TEXT",
+    },
+}
 
 def db_connect(config: dict[str, Any]) -> sqlite3.Connection:
     connection = sqlite3.connect(
@@ -189,10 +196,20 @@ def validate_db_schema(config: dict[str, Any]) -> None:
                 )
 
 
+def ensure_optional_columns(connection: sqlite3.Connection) -> None:
+    for table_name, definitions in OPTIONAL_COLUMN_DEFINITIONS.items():
+        current_columns = set(table_columns(connection, table_name).keys())
+        for column_name, column_sql in definitions.items():
+            if column_name in current_columns:
+                continue
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
+
+
 def init_db(config: dict[str, Any]) -> None:
     ensure_dir(Path(config["db_path"]).parent)
     with db_connect(config) as connection:
         connection.executescript(SCHEMA_SQL)
+        ensure_optional_columns(connection)
     validate_db_schema(config)
 
 
@@ -334,6 +351,7 @@ def upsert_issue_session(
     issue_number: int,
     *,
     backend: str,
+    selected_model: str | None,
     session_key: str,
     session_state: str,
     last_trigger_reason: str | None,
@@ -351,12 +369,13 @@ def upsert_issue_session(
         connection.execute(
             """
             INSERT INTO issue_sessions (
-                repo_full_name, issue_number, backend, session_key, session_state,
+                repo_full_name, issue_number, backend, selected_model, session_key, session_state,
                 last_trigger_reason, last_triggered_at, handoff_prompt, agent_session_id,
                 branch_name, pr_url, summary, last_result_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(repo_full_name, issue_number) DO UPDATE SET
                 backend = excluded.backend,
+                selected_model = excluded.selected_model,
                 session_key = excluded.session_key,
                 session_state = excluded.session_state,
                 last_trigger_reason = excluded.last_trigger_reason,
@@ -373,6 +392,7 @@ def upsert_issue_session(
                 repo_full_name,
                 issue_number,
                 backend,
+                selected_model,
                 session_key,
                 session_state,
                 last_trigger_reason,
@@ -531,6 +551,21 @@ def get_job(config: dict[str, Any], job_id: str) -> sqlite3.Row | None:
         return connection.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
 
 
+def list_jobs_for_issue(config: dict[str, Any], repo_full_name: str, issue_number: int) -> list[sqlite3.Row]:
+    with db_connect(config) as connection:
+        return list(
+            connection.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE repo_full_name = ? AND issue_number = ?
+                ORDER BY created_at DESC
+                """,
+                (repo_full_name, issue_number),
+            ).fetchall()
+        )
+
+
 def mark_job_running(config: dict[str, Any], job_id: str, pid: int) -> None:
     with db_connect(config) as connection:
         connection.execute(
@@ -558,7 +593,13 @@ def mark_job_finished(
             SET status = ?, finished_at = ?, worker_pid = NULL, error_text = ?, result_summary = ?
             WHERE job_id = ?
             """,
-            (status, now_utc(), error_text, result_summary, job_id),
+            (
+                status,
+                now_utc(),
+                error_text,
+                result_summary,
+                job_id,
+            ),
         )
 
 

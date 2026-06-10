@@ -26,9 +26,13 @@ Activate this skill when the user wants to:
 ## Required create flow
 
 1. Resolve `owner/repo` from `repoAliases` when possible.
+   - Also accept bare repo names under the configured default owner, for example `router` -> `yeying-community/router`.
+   - If the user already named a repo and it still cannot be normalized, ask for clarification instead of falling back to `robot`.
+   - Treat colloquial task requests that already mention a repo, for example `将chat登录页面的广告链接去掉`, as create requests when they describe a concrete change or bug.
 2. Draft title, body, labels, and assignees.
    - Always include a `跟进人：` line in the issue body.
    - If the user already指定了谁来跟进，直接写成 `跟进人：姓名`；否则先留空。
+   - If `config/policy.json` contains `githubUserAliases`, use that mapping to turn the follow owner name into GitHub `assignees`.
 3. Preview with `node tools/github_issue_create.mjs ...`.
 4. Save a pending action with:
 
@@ -46,9 +50,12 @@ node tools/pending_action.mjs \
 ## Required update flow
 
 1. Resolve `owner/repo` and `issueNumber`.
+   - Bare repo names should use the configured default owner.
+   - Never replace an unrecognized repo with `robot`.
 2. Only modify the fields the user clearly asked for: `title`, `body`, `labels`, `assignees`.
    - If the user is only specifying who来处理这个 issue, update the `跟进人：` line in the body.
    - Prefer passing `--followOwner 姓名`. If the user明确要清空跟进人，use `--clearFollowOwner true`.
+   - If that name exists in `config/policy.json.githubUserAliases`, also sync it into GitHub `assignees`.
 3. Preview with `node tools/github_issue_update.mjs ...`.
 4. Save a pending action with `node tools/pending_action.mjs --action create ...`.
 5. Reply with repo, issue number, changed fields, `/confirm`, `/cancel`.
@@ -57,6 +64,8 @@ node tools/pending_action.mjs \
 ## Required close flow
 
 1. Resolve `owner/repo` and `issueNumber`.
+   - Bare repo names should use the configured default owner.
+   - Never replace an unrecognized repo with `robot`.
 2. Default close reason to `completed` unless `not_planned` is clearly intended.
 3. Preview with `node tools/github_issue_close.mjs ...`.
 4. Save a pending action with `node tools/pending_action.mjs --action create ...`.
@@ -73,6 +82,7 @@ node tools/pending_action.mjs \
 - New preview should replace the old pending draft only when those three dimensions are the same.
 - Same requester may keep multiple pending drafts in one group if the repositories differ.
 - If the requester has multiple repo drafts, require `/confirm <repo>` or `/cancel <repo>`.
+- If repo is clear, issue number is absent, and the message is a concrete task/bug/change request, prefer create preview over silence even when the user did not literally say `创建 issue`.
 - Attachment behavior: if the user message includes Feishu attachments, preview should keep them as attachment notes in the draft/body. After execute or `/confirm`, they should only be described as uploaded if the tool path truly uploaded them and returned usable links.
 
 

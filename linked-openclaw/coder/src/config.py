@@ -23,8 +23,8 @@ from src.utils.helpers import (
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_FORK_OWNER = "YeYing2025"
-DEFAULT_EXECUTION_BACKEND = "openclaw"
-SUPPORTED_EXECUTION_BACKENDS = {"openclaw"}
+DEFAULT_EXECUTION_BACKEND = "codex"
+SUPPORTED_EXECUTION_BACKENDS = {"codex"}
 DEFAULT_GIT_AUTHOR_EMAIL = "coder-bot@local"
 
 
@@ -64,6 +64,23 @@ def env_csv(name: str, default: list[str]) -> list[str]:
         return list(default)
     values = [item.strip() for item in raw.split(",") if item.strip()]
     return values or list(default)
+
+
+def env_mapping(name: str) -> dict[str, str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return {}
+    result: dict[str, str] = {}
+    for item in raw.split(","):
+        pair = item.strip()
+        if not pair or "=" not in pair:
+            continue
+        key, value = pair.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if key and value:
+            result[key] = value
+    return result
 
 
 def resolve_path_value(value: str, *, base_dir: Path) -> Path:
@@ -131,6 +148,8 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
         data_dir / "openclaw" / "state",
         app_home / "feishu-state",
     )
+    default_codex_source_home = Path.home() / ".codex"
+    default_codex_runtime_home = (data_dir / "codex" / "home").resolve(strict=False)
     allowed_repos = [
         item.strip()
         for item in os.getenv("ALLOWED_REPOS", "").split(",")
@@ -148,8 +167,6 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
         "secrets_dir": str(secrets_dir),
         "listen_host": os.getenv("LISTEN_HOST", "0.0.0.0"),
         "listen_port": env_int("LISTEN_PORT", 9081),
-        "webhook_enabled": env_bool("ENABLE_WEBHOOK", False),
-        "webhook_secret": os.getenv("GITHUB_WEBHOOK_SECRET", ""),
         "github_api_url": os.getenv("GITHUB_API_URL", "https://api.github.com").rstrip("/"),
         "github_app_id": os.getenv("GITHUB_APP_ID", "").strip(),
         "github_installation_id": os.getenv("GITHUB_INSTALLATION_ID", "").strip(),
@@ -167,13 +184,11 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
         "github_fork_owner": os.getenv("GITHUB_FORK_OWNER", DEFAULT_FORK_OWNER).strip()
         or DEFAULT_FORK_OWNER,
         "allowed_repos": allowed_repos,
-        "run_on_issue_opened": env_bool("RUN_ON_ISSUE_OPENED", False),
-        "trigger_label": os.getenv("TRIGGER_LABEL", "ai-run").strip(),
-        "trigger_comment": os.getenv("TRIGGER_COMMENT", "/run").strip() or "/run",
         "execution_backend": (
             os.getenv("EXECUTION_BACKEND", DEFAULT_EXECUTION_BACKEND).strip().lower()
             or DEFAULT_EXECUTION_BACKEND
         ),
+        "repo_aliases": env_mapping("REPO_ALIASES"),
         "openclaw_bin": env_command("OPENCLAW_BIN", default_openclaw_bin, base_dir=app_home),
         "openclaw_model": os.getenv("OPENCLAW_MODEL", "router/gpt-5.4").strip()
         or "router/gpt-5.4",
@@ -194,13 +209,30 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
             base_dir=app_home,
         ),
         "openclaw_session_prefix": os.getenv("OPENCLAW_SESSION_PREFIX", "gh").strip() or "gh",
+        "openclaw_feishu_passive_mode": env_bool("OPENCLAW_FEISHU_PASSIVE_MODE", True),
+        "codex_bin": env_command("CODEX_BIN", "codex", base_dir=app_home),
+        "codex_model": os.getenv("CODEX_MODEL", "").strip(),
+        "codex_timeout": env_int("CODEX_TIMEOUT", 3600),
+        "codex_source_home": env_path(
+            "CODEX_SOURCE_HOME",
+            default_codex_source_home,
+            base_dir=app_home,
+        ),
+        "codex_runtime_home": env_path(
+            "CODEX_RUNTIME_HOME",
+            default_codex_runtime_home,
+            base_dir=app_home,
+        ),
+        "codex_use_dangerously_bypass": env_bool("CODEX_USE_DANGEROUSLY_BYPASS", True),
         "issue_branch_prefix": os.getenv("ISSUE_BRANCH_PREFIX", "coder").strip() or "coder",
         "feishu_handoff_chat_id": os.getenv("FEISHU_HANDOFF_CHAT_ID", "").strip(),
+        "feishu_handoff_chat_ids": env_csv("FEISHU_HANDOFF_CHAT_IDS", []),
         "feishu_account_id": os.getenv("FEISHU_ACCOUNT_ID", "default").strip() or "default",
         "feishu_confirm_keywords": env_csv(
             "FEISHU_CONFIRM_KEYWORDS",
             ["/run", "开始执行", "确认执行", "可以执行"],
         ),
+        "feishu_chat_scan_limit": env_int("FEISHU_CHAT_SCAN_LIMIT", 30),
         "feishu_thread_scan_limit": env_int("FEISHU_THREAD_SCAN_LIMIT", 30),
         "db_path": env_path(
             "DB_PATH",
@@ -246,10 +278,7 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
             data_dir / "logs",
             base_dir=app_home,
         ),
-        "poll_enabled": env_bool("ENABLE_POLLING", True),
-        "poll_interval_seconds": env_int("POLL_INTERVAL_SECONDS", 60),
         "dispatch_interval_seconds": env_int("DISPATCH_INTERVAL_SECONDS", 5),
-        "issue_scan_limit": env_int("ISSUE_SCAN_LIMIT", 30),
         "fork_wait_timeout_seconds": env_int("FORK_WAIT_TIMEOUT_SECONDS", 300),
     }
 
@@ -257,12 +286,6 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
 def collect_config_errors(config: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     backend = config["execution_backend"]
-
-    if not config["webhook_enabled"] and not config["poll_enabled"]:
-        errors.append("ENABLE_WEBHOOK 和 ENABLE_POLLING 不能同时关闭。")
-
-    if config["webhook_enabled"] and not config["webhook_secret"]:
-        errors.append("ENABLE_WEBHOOK=true 时必须配置 GITHUB_WEBHOOK_SECRET。")
 
     if not config["allowed_repos"]:
         errors.append("ALLOWED_REPOS 不能为空。")
@@ -304,8 +327,17 @@ def collect_config_errors(config: dict[str, Any]) -> list[str]:
     if not config["openclaw_runtime_config_path"]:
         errors.append("OPENCLAW_RUNTIME_CONFIG_PATH 不能为空。")
 
-    if not config["trigger_comment"]:
-        errors.append("TRIGGER_COMMENT 不能为空。")
+    if not config["codex_bin"]:
+        errors.append("CODEX_BIN 不能为空。")
+    elif not command_exists(config["codex_bin"]):
+        errors.append("CODEX_BIN 不存在或不可执行。")
+
+    source_home = Path(str(config["codex_source_home"])).expanduser()
+    runtime_home = Path(str(config["codex_runtime_home"])).expanduser()
+    source_auth = source_home / "auth.json"
+    runtime_auth = runtime_home / "auth.json"
+    if not source_auth.exists() and not runtime_auth.exists():
+        errors.append("CODEX_SOURCE_HOME 或 CODEX_RUNTIME_HOME 下至少要有一份可用的 auth.json。")
 
     return errors
 
@@ -374,8 +406,34 @@ def run_doctor(config: dict[str, Any], env_file: Path) -> int:
         check("OpenClaw 运行时配置", False, "skipped: static config or executable missing")
         check("OpenClaw Agent Registry", False, "skipped: config or executable missing")
 
+    codex_exists = command_exists(config["codex_bin"])
+    check("Codex 可执行文件", codex_exists, config["codex_bin"])
+    if codex_exists:
+        try:
+            codex_probe = run_command(
+                [config["codex_bin"], "--version"],
+                cwd=Path(config["app_home"]),
+                timeout=30,
+            )
+            probe_output = tail_text(
+                "\n".join(part for part in [codex_probe.stdout, codex_probe.stderr] if part),
+                500,
+            ) or config["codex_bin"]
+            check("Codex CLI 可运行", codex_probe.returncode == 0, probe_output)
+        except Exception as exc:
+            check("Codex CLI 可运行", False, str(exc))
+    else:
+        check("Codex CLI 可运行", False, "skipped: executable missing")
+
     check("GitHub CLI", command_exists("gh"), "gh")
-    check("Gunicorn", importlib.util.find_spec("gunicorn") is not None or command_exists("gunicorn"), "gunicorn")
+    gunicorn_candidates = [
+        "gunicorn",
+        str((Path(config["app_home"]) / ".venv" / "bin" / "gunicorn").resolve(strict=False)),
+    ]
+    gunicorn_available = importlib.util.find_spec("gunicorn") is not None or any(
+        command_exists(candidate) for candidate in gunicorn_candidates
+    )
+    check("Gunicorn", gunicorn_available, gunicorn_candidates[-1] if gunicorn_available else "gunicorn")
 
     try:
         ensure_writable_path(Path(config["db_path"]), is_file=True)
@@ -384,12 +442,19 @@ def run_doctor(config: dict[str, Any], env_file: Path) -> int:
         ensure_writable_path(Path(config["active_dir"]), is_file=False)
         ensure_writable_path(Path(config["state_file"]), is_file=True)
         ensure_writable_path(Path(config["log_dir"]), is_file=False)
+        detail_parts = [
+            "DB_PATH",
+            "JOB_ROOT",
+            "REPO_ROOT",
+            "ACTIVE_DIR",
+            "STATE_FILE",
+            "LOG_DIR",
+        ]
         ensure_writable_path(Path(config["openclaw_runtime_config_path"]), is_file=True)
         ensure_writable_path(Path(config["openclaw_state_dir"]), is_file=False)
-        detail = (
-            "DB_PATH / JOB_ROOT / REPO_ROOT / ACTIVE_DIR / STATE_FILE / "
-            "LOG_DIR / OPENCLAW_RUNTIME_CONFIG_PATH / OPENCLAW_STATE_DIR 可写"
-        )
+        ensure_writable_path(Path(config["codex_runtime_home"]), is_file=False)
+        detail_parts.extend(["OPENCLAW_RUNTIME_CONFIG_PATH", "OPENCLAW_STATE_DIR", "CODEX_RUNTIME_HOME"])
+        detail = " / ".join(detail_parts) + " 可写"
         check("目录写权限", True, detail)
     except Exception as exc:
         check("目录写权限", False, str(exc))

@@ -43,6 +43,7 @@ RUNTIME_CONFIG_PATH="${OPENCLAW_RUNTIME_CONFIG_PATH:-${APP_DIR}/data/openclaw/ru
 LOG_DIR="${APP_DIR}/data/logs"
 LOG_PATH="${OPENCLAW_LOG_PATH:-${LOG_DIR}/openclaw-gateway.log}"
 PID_FILE="${OPENCLAW_PID_FILE:-${APP_DIR}/data/openclaw/openclaw-gateway.pid}"
+NULL_FILE="${OPENCLAW_NULL_FILE:-/tmp/openclaw-gateway.null}"
 
 if [[ -z "${UV_BIN}" ]]; then
   echo "uv not found. Install uv first or set UV_BIN=/path/to/uv." >&2
@@ -50,6 +51,7 @@ if [[ -z "${UV_BIN}" ]]; then
 fi
 
 mkdir -p "${UV_CACHE_DIR}"
+: >"${NULL_FILE}"
 
 CONFIG_PATH="$(
   cd "${APP_DIR}"
@@ -84,22 +86,26 @@ PY
 mkdir -p "$(dirname "${PID_FILE}")" "${LOG_DIR}"
 
 if [[ -f "${PID_FILE}" ]]; then
-  old_pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-  if [[ -n "${old_pid}" ]] && kill -0 "${old_pid}" 2>/dev/null; then
+  old_pid="$(cat "${PID_FILE}" 2>"${NULL_FILE}" || true)"
+  if [[ -n "${old_pid}" ]] && kill -0 "${old_pid}" 2>"${NULL_FILE}"; then
     echo "already running: pid=${old_pid}"
     exit 0
   fi
   rm -f "${PID_FILE}"
 fi
 
-nohup "${SCRIPT_DIR}/run_gateway.sh" >>"${LOG_PATH}" 2>&1 &
+if command -v setsid >"${NULL_FILE}" 2>&1; then
+  setsid "${SCRIPT_DIR}/run_gateway.sh" <"${NULL_FILE}" >>"${LOG_PATH}" 2>&1 &
+else
+  "${SCRIPT_DIR}/run_gateway.sh" <"${NULL_FILE}" >>"${LOG_PATH}" 2>&1 &
+fi
 echo $! >"${PID_FILE}"
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
   if [[ -f "${PID_FILE}" ]]; then
-    pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
-    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null && ss -lnt 2>/dev/null | awk '{print $4}' | grep -q ":${PORT}$"; then
+    pid="$(cat "${PID_FILE}" 2>"${NULL_FILE}" || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>"${NULL_FILE}" && ss -lnt 2>"${NULL_FILE}" | awk '{print $4}' | grep -q ":${PORT}$"; then
       echo "started: pid=${pid}"
       exit 0
     fi

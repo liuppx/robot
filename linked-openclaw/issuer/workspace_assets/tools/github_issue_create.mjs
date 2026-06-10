@@ -1,21 +1,37 @@
 #!/usr/bin/env node
 
-import { enrichIssueBodyWithLatestAttachments, parseArgs, parseCsv, printJson, required } from "./lib/common.mjs";
+import {
+  enrichIssueBodyWithLatestAttachments,
+  loadGitHubRepoDefaults,
+  loadPolicy,
+  parseArgs,
+  parseCsv,
+  printJson,
+  required,
+  resolveGitHubAssigneesFromPolicy,
+  workspaceRootFromTool
+} from "./lib/common.mjs";
 import { auditGitHubTool, summarizeIssuePayload } from "./lib/github_audit.mjs";
 import { enrichTextWithUploadedAttachments } from "./lib/github_attachments.mjs";
 import { resolveGitHubToken } from "./lib/github_app.mjs";
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const workspaceRoot = workspaceRootFromTool(import.meta.url);
+  const defaults = loadGitHubRepoDefaults(workspaceRoot);
   // 默认走 preview，只有显式 execute=true 才真的调 GitHub API。
   const execute = args.execute === "true";
-  const owner = args.owner || process.env.GITHUB_DEFAULT_OWNER || process.env.GITHUB_OWNER;
-  const repo = args.repo || process.env.GITHUB_DEFAULT_REPO || process.env.GITHUB_REPO;
+  const owner = args.owner || defaults.owner;
+  const repo = args.repo || defaults.repo;
   const title = required("title", args.title);
   const draftBody = required("body", args.body);
   const followOwner = args.followOwner === undefined ? "" : String(args.followOwner).trim();
   const labels = parseCsv(args.labels);
-  const assignees = parseCsv(args.assignees);
+  const policy = loadPolicy(workspaceRoot);
+  const assignees = resolveGitHubAssigneesFromPolicy(policy, {
+    assignees: parseCsv(args.assignees),
+    followOwner
+  });
   const { body, attachments } = enrichIssueBodyWithLatestAttachments(draftBody, {
     ensureFollowOwner: true,
     followOwner

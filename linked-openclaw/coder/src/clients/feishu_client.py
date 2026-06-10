@@ -14,6 +14,7 @@ from src.utils.helpers import short_text, slugify
 
 
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
+FEISHU_LEADING_MENTION_PATTERN = re.compile(r"^\s*(?:@[^\s/]+\s*)+")
 
 
 def build_feishu_thread_peer_id(chat_id: str, thread_id: str) -> str:
@@ -47,7 +48,7 @@ def is_feishu_route_session_key(value: str | None) -> bool:
     )
 
 
-def resolve_feishu_runtime_settings(config: dict[str, Any]) -> dict[str, str]:
+def resolve_feishu_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
     payload = load_openclaw_config_json(config)
     feishu_cfg = ((payload.get("channels") or {}).get("feishu") or {})
     if not isinstance(feishu_cfg, dict):
@@ -61,18 +62,33 @@ def resolve_feishu_runtime_settings(config: dict[str, Any]) -> dict[str, str]:
         for item in (feishu_cfg.get("groupAllowFrom") or [])
         if str(item).strip()
     ]
-    chat_id = config["feishu_handoff_chat_id"] or (configured_groups[0] if configured_groups else "")
+    configured_chat_ids = [
+        str(item).strip()
+        for item in (config.get("feishu_handoff_chat_ids") or [])
+        if str(item).strip()
+    ]
+    if config.get("feishu_handoff_chat_id"):
+        configured_chat_ids.insert(0, str(config["feishu_handoff_chat_id"]).strip())
+    chat_ids: list[str] = []
+    for item in [*configured_chat_ids, *configured_groups]:
+        normalized = str(item).strip()
+        if normalized and normalized not in chat_ids:
+            chat_ids.append(normalized)
+    chat_id = chat_ids[0] if chat_ids else ""
     account_id = config["feishu_account_id"]
 
     if not app_id or not app_secret:
         raise RuntimeError("Feishu appId/appSecret is missing from OpenClaw config or env")
     if not chat_id:
-        raise RuntimeError("FEISHU_HANDOFF_CHAT_ID is empty and channels.feishu.groupAllowFrom has no group")
+        raise RuntimeError(
+            "FEISHU_HANDOFF_CHAT_ID(S) are empty and channels.feishu.groupAllowFrom has no group"
+        )
 
     return {
         "app_id": app_id,
         "app_secret": app_secret,
         "chat_id": chat_id,
+        "chat_ids": chat_ids,
         "account_id": account_id,
     }
 
@@ -148,6 +164,33 @@ def parse_feishu_message_text(item: dict[str, Any]) -> str:
         return raw_content.strip()
     if msg_type == "text":
         return str(parsed.get("text") or "").strip()
+    if msg_type == "post":
+        title = str(parsed.get("title") or "").strip()
+        lines: list[str] = []
+        for paragraph in parsed.get("content") or []:
+            if not isinstance(paragraph, list):
+                continue
+            parts: list[str] = []
+            for block in paragraph:
+                if not isinstance(block, dict):
+                    continue
+                text = str(block.get("text") or "").strip()
+                if text:
+                    parts.append(text)
+                    continue
+                tag = str(block.get("tag") or "").strip().lower()
+                if tag == "at":
+                    mention_name = str(block.get("user_name") or block.get("name") or "@").strip()
+                    if mention_name:
+                        parts.append(f"@{mention_name}" if not mention_name.startswith("@") else mention_name)
+                elif tag == "img":
+                    parts.append("[image]")
+            line = "".join(parts).strip()
+            if line:
+                lines.append(line)
+        if title:
+            lines.insert(0, title)
+        return "\n".join(lines).strip()
     if isinstance(parsed, str):
         return parsed.strip()
     return str(parsed.get("text") or parsed.get("title") or "").strip()
@@ -213,14 +256,46 @@ def feishu_list_thread_messages(
     thread_id: str,
     limit: int,
 ) -> list[dict[str, Any]]:
+    return feishu_list_container_messages(
+        config,
+        runtime,
+        container_id_type="thread",
+        container_id=thread_id,
+        limit=limit,
+    )
+
+
+def feishu_list_chat_messages(
+    config: dict[str, Any],
+    runtime: dict[str, Any],
+    chat_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    return feishu_list_container_messages(
+        config,
+        runtime,
+        container_id_type="chat",
+        container_id=chat_id,
+        limit=limit,
+    )
+
+
+def feishu_list_container_messages(
+    config: dict[str, Any],
+    runtime: dict[str, Any],
+    *,
+    container_id_type: str,
+    container_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
     payload = feishu_request(
         config,
         runtime,
         "GET",
         "/im/v1/messages",
         params={
-            "container_id_type": "thread",
-            "container_id": thread_id,
+            "container_id_type": container_id_type,
+            "container_id": container_id,
             "sort_type": "ByCreateTimeDesc",
             "page_size": min(max(1, limit), 50),
         },
@@ -261,7 +336,8 @@ def feishu_message_marker_is_newer(
 
 
 def normalize_confirm_text(value: str) -> str:
-    return re.sub(r"\s+", " ", (value or "").strip()).lower()
+    text = FEISHU_LEADING_MENTION_PATTERN.sub("", (value or "").strip())
+    return re.sub(r"\s+", " ", text).lower()
 
 
 def message_matches_confirm_keywords(text: str, keywords: list[str]) -> bool:
@@ -298,7 +374,7 @@ def build_feishu_handoff_intro(repo_full_name: str, issue: dict[str, Any]) -> st
     title = short_text(issue.get("title") or f"Issue #{issue['number']}", 120)
     return textwrap.dedent(
         f"""
-        [Coder] GitHub 已接收 {repo_full_name}#{issue['number']}
+        [Coder] 已登记 {repo_full_name}#{issue['number']}
         标题：{title}
 
         请在线程里先讨论方案。

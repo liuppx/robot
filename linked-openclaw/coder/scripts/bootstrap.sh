@@ -96,19 +96,11 @@ for key in required:
     elif value in placeholder_values:
         errors.append(f"{key} still uses template placeholder: {value}")
 
-if values.get("ENABLE_WEBHOOK", "").strip().lower() in {"1", "true", "yes", "on"}:
-    if not values.get("GITHUB_WEBHOOK_SECRET", "").strip():
-        errors.append("ENABLE_WEBHOOK=true but GITHUB_WEBHOOK_SECRET is empty")
-
 execution_backend = values.get("EXECUTION_BACKEND", "openclaw").strip().lower() or "openclaw"
 openclaw_model = values.get("OPENCLAW_MODEL", "router/gpt-5.4").strip() or "router/gpt-5.4"
 if execution_backend == "openclaw" and openclaw_model.startswith("router/"):
     if not values.get("ROUTER_API_KEY", "").strip():
         errors.append("OPENCLAW_MODEL uses router/* but ROUTER_API_KEY is empty")
-
-if values.get("ENABLE_WEBHOOK", "").strip().lower() not in {"1", "true", "yes", "on"} and \
-   values.get("ENABLE_POLLING", "true").strip().lower() not in {"1", "true", "yes", "on"}:
-    errors.append("ENABLE_WEBHOOK and ENABLE_POLLING cannot both be disabled")
 
 if errors:
     print("env check failed:")

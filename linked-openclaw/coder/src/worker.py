@@ -22,6 +22,7 @@ from src.clients.github_client import (
     get_repo_info_optional,
     list_pull_requests,
 )
+from src.clients.codex_client import build_codex_env, parse_codex_jsonl_events, parse_codex_jsonl_usage
 from src.clients.openclaw_client import (
     build_openclaw_env,
     list_openclaw_agents,
@@ -48,6 +49,14 @@ OPENCLAW_RUNTIME_ARTIFACT_ROOTS = {
     "USER.md",
 }
 DEFAULT_GIT_AUTHOR_EMAIL = "coder-bot@local"
+JOB_TOKEN_USAGE_FILENAME = "token_usage.json"
+TOKEN_USAGE_KEYS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
 
 
 @dataclass
@@ -69,6 +78,56 @@ def build_issue_agent_id(config: dict[str, Any], repo_full_name: str, issue_numb
     if prefix:
         return f"{prefix}-{repo_slug}-issue-{issue_number}"
     return f"{repo_slug}-issue-{issue_number}"
+
+
+def empty_token_usage() -> dict[str, int]:
+    return {key: 0 for key in TOKEN_USAGE_KEYS}
+
+
+def merge_token_usage(base: dict[str, int], extra: dict[str, int] | None) -> dict[str, int]:
+    if not extra:
+        return base
+    for key in TOKEN_USAGE_KEYS:
+        base[key] = int(base.get(key) or 0) + int(extra.get(key) or 0)
+    return base
+
+
+def normalize_token_usage(value: dict[str, Any] | None) -> dict[str, int] | None:
+    if not value:
+        return None
+    usage = empty_token_usage()
+    for key in TOKEN_USAGE_KEYS:
+        usage[key] = int(value.get(key) or 0)
+    if not any(usage.values()):
+        return None
+    return usage
+
+
+def job_token_usage_path(job_dir: Path) -> Path:
+    return Path(job_dir) / JOB_TOKEN_USAGE_FILENAME
+
+
+def write_job_token_usage(job_dir: Path, token_usage: dict[str, Any] | None) -> None:
+    usage = normalize_token_usage(token_usage)
+    if usage is None:
+        return
+    job_token_usage_path(job_dir).write_text(
+        json.dumps(usage, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def read_job_token_usage(job_dir: Path) -> dict[str, int] | None:
+    path = job_token_usage_path(job_dir)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return normalize_token_usage(payload)
 
 
 def repo_workspace_root(config: dict[str, Any], repo_full_name: str) -> Path:
@@ -818,6 +877,77 @@ def extract_openclaw_result(payload: dict[str, Any]) -> tuple[str, str | None]:
     return text, session_id
 
 
+def run_codex_chat_turn(
+    config: dict[str, Any],
+    work_dir: Path,
+    prompt: str,
+    *,
+    resume_session_id: str | None = None,
+    log_dir: Path | None = None,
+    selected_model: str | None = None,
+) -> dict[str, Any]:
+    env = build_codex_env(config)
+    temp_root = ensure_dir(Path(config["data_dir"]) / "codex" / "tmp")
+    output_path = (log_dir or temp_root) / f"codex-last-message-{int(time.time() * 1000)}-{os.getpid()}.txt"
+    command = [
+        config["codex_bin"],
+        "exec",
+    ]
+    if resume_session_id:
+        command.append("resume")
+    command.extend(
+        [
+            "--json",
+            "-o",
+            str(output_path),
+            "--skip-git-repo-check",
+        ]
+    )
+    if not resume_session_id:
+        command.extend(["-C", str(work_dir)])
+    effective_model = str(selected_model or config.get("codex_model") or "").strip()
+    if effective_model:
+        command.extend(["-m", effective_model])
+    if config.get("codex_use_dangerously_bypass", True):
+        command.append("--dangerously-bypass-approvals-and-sandbox")
+    if resume_session_id:
+        command.append(str(resume_session_id))
+    command.append(prompt)
+
+    result = run_command(
+        command,
+        cwd=work_dir,
+        env=env,
+        timeout=int(config["codex_timeout"]) + 120,
+    )
+    if log_dir is not None:
+        (log_dir / "codex.stdout.jsonl").write_text(result.stdout or "", encoding="utf-8")
+        (log_dir / "codex.stderr.log").write_text(result.stderr or "", encoding="utf-8")
+    if result.returncode != 0:
+        raise RuntimeError(
+            "codex execution failed\n"
+            f"{tail_text(result.stderr or result.stdout, 4000)}"
+        )
+
+    thread_id, streamed_text = parse_codex_jsonl_events(result.stdout or "")
+    response_text = ""
+    if output_path.exists():
+        response_text = output_path.read_text(encoding="utf-8").strip()
+    if not response_text:
+        response_text = streamed_text or ""
+    response_text = response_text.strip()
+    if not response_text:
+        raise RuntimeError("codex returned empty assistant reply")
+    return {
+        "agent_id": "codex",
+        "agent_session_id": thread_id or resume_session_id,
+        "text": response_text,
+        "stdout": result.stdout or "",
+        "stderr": result.stderr or "",
+        "token_usage": parse_codex_jsonl_usage(result.stdout or ""),
+    }
+
+
 def run_openclaw_chat_turn(
     config: dict[str, Any],
     repo_full_name: str,
@@ -920,6 +1050,38 @@ def run_openclaw(
     return parsed
 
 
+def run_discussion_turn(
+    config: dict[str, Any],
+    repo_full_name: str,
+    issue_number: int,
+    work_dir: Path,
+    prompt: str,
+    session_key: str,
+    *,
+    agent_session_id: str | None = None,
+    log_dir: Path | None = None,
+    selected_model: str | None = None,
+) -> dict[str, Any]:
+    backend = str(config.get("execution_backend") or "openclaw").strip().lower()
+    if backend == "codex":
+        return run_codex_chat_turn(
+            config,
+            work_dir,
+            prompt,
+            resume_session_id=agent_session_id,
+            log_dir=log_dir,
+            selected_model=selected_model,
+        )
+    return run_openclaw_chat_turn(
+        config,
+        repo_full_name,
+        issue_number,
+        prompt,
+        session_key,
+        log_dir=log_dir,
+    )
+
+
 def run_executor(
     config: dict[str, Any],
     repo_full_name: str,
@@ -928,7 +1090,36 @@ def run_executor(
     prompt: str,
     job_dir: Path,
     session_key: str,
+    agent_session_id: str | None = None,
+    selected_model: str | None = None,
 ) -> dict[str, str]:
+    backend = str(config.get("execution_backend") or "openclaw").strip().lower()
+    if backend == "codex":
+        turn = run_codex_chat_turn(
+            config,
+            work_dir,
+            prompt,
+            resume_session_id=agent_session_id,
+            log_dir=job_dir,
+            selected_model=selected_model,
+        )
+        response_text = str(turn["text"])
+        stderr_text = str(turn.get("stderr") or "")
+        try:
+            parsed = parse_executor_result(response_text)
+        except RuntimeError as exc:
+            parts = [
+                "codex final response missing structured result",
+                "assistant reply:",
+                tail_text(response_text, 1200),
+            ]
+            if stderr_text.strip():
+                parts.extend(["stderr:", tail_text(stderr_text, 1200)])
+            raise RuntimeError("\n".join(parts).strip()) from exc
+        parsed["agent_id"] = str(turn["agent_id"])
+        parsed["agent_session_id"] = str(turn["agent_session_id"] or agent_session_id or session_key)
+        parsed["token_usage"] = normalize_token_usage(turn.get("token_usage"))
+        return parsed
     return run_openclaw(config, repo_full_name, issue_number, work_dir, prompt, job_dir, session_key)
 
 
@@ -950,6 +1141,7 @@ def process_job(context: WorkerContext, job_id: str) -> None:
     error_text: str | None = None
     result_summary: str | None = None
     pr_url: str | None = None
+    token_usage = empty_token_usage()
     active_locked = False
     repo_locked = False
 
@@ -969,6 +1161,8 @@ def process_job(context: WorkerContext, job_id: str) -> None:
         session_row = context.ensure_issue_session(repo_full_name, issue_number, issue_title)
         session_key = str(session_row["session_key"])
         branch_name = str(session_row["branch_name"])
+        existing_agent_session_id = str(session_row["agent_session_id"] or "").strip() or None
+        selected_model = str(session_row["selected_model"] or "").strip() or None
         _, work_dir = ensure_repo_checkout(context.config, repo_full_name, issue_number, default_branch, branch_name)
 
         prompt = build_prompt(
@@ -986,10 +1180,13 @@ def process_job(context: WorkerContext, job_id: str) -> None:
             prompt,
             job_dir,
             session_key,
+            existing_agent_session_id,
+            selected_model,
         )
         final_status = str(executor_result["status"])
         result_summary = str(executor_result["text"])
         agent_session_id = str(executor_result.get("agent_session_id") or "").strip() or None
+        merge_token_usage(token_usage, normalize_token_usage(executor_result.get("token_usage")))
 
         context.upsert_issue_session(
             repo_full_name,
@@ -1012,10 +1209,13 @@ def process_job(context: WorkerContext, job_id: str) -> None:
                     retry_prompt,
                     retry_job_dir,
                     session_key,
+                    agent_session_id,
+                    selected_model,
                 )
                 final_status = str(retry_result["status"])
                 result_summary = str(retry_result["text"])
                 agent_session_id = str(retry_result.get("agent_session_id") or "").strip() or agent_session_id
+                merge_token_usage(token_usage, normalize_token_usage(retry_result.get("token_usage")))
                 context.upsert_issue_session(
                     repo_full_name,
                     issue_number,
@@ -1092,6 +1292,10 @@ def process_job(context: WorkerContext, job_id: str) -> None:
         )
         raise
     finally:
+        final_token_usage = normalize_token_usage(token_usage)
+        write_job_token_usage(job_dir, final_token_usage)
+        if final_token_usage is not None:
+            print(f"[worker] job {job_id} token usage: {json.dumps(final_token_usage, ensure_ascii=True, sort_keys=True)}")
         context.mark_job_finished(
             job_id,
             final_status,
@@ -1112,6 +1316,7 @@ def process_job(context: WorkerContext, job_id: str) -> None:
             pr_url=pr_url,
             result_summary=result_summary,
             error_text=error_text,
+            token_usage=final_token_usage,
         )
 
 

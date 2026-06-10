@@ -10,6 +10,21 @@ import { loadSQLite } from "./sqlite_runtime.mjs";
 const { DatabaseSync } = await loadSQLite();
 
 const LEGACY_MIGRATION_KEY = "legacy-json-store-v1";
+export const PENDING_STATUS_PENDING = "pending";
+export const PENDING_STATUS_EXECUTING = "executing";
+export const PENDING_STATUS_DONE = "done";
+export const PENDING_STATUS_CANCELLED = "cancelled";
+export const PENDING_STATUSES = new Set([
+  PENDING_STATUS_PENDING,
+  PENDING_STATUS_EXECUTING,
+  PENDING_STATUS_DONE,
+  PENDING_STATUS_CANCELLED
+]);
+
+function normalizePendingStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PENDING_STATUSES.has(normalized) ? normalized : PENDING_STATUS_PENDING;
+}
 
 function stateRootDir(workspaceRoot) {
   const dir = process.env.PENDING_STATE_ROOT
@@ -80,6 +95,7 @@ function ensureSchema(db) {
       slot_key TEXT PRIMARY KEY,
       draft_id TEXT NOT NULL,
       version INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       scope_channel_id TEXT NOT NULL,
@@ -126,6 +142,16 @@ function ensureSchema(db) {
       value TEXT NOT NULL
     );
   `);
+
+  ensureColumn(db, "pending_actions", "status", "TEXT NOT NULL DEFAULT 'pending'");
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (columns.some((column) => column.name === columnName)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`);
 }
 
 function getMeta(db, key) {
@@ -160,6 +186,7 @@ function serializeEntry(entry) {
   return JSON.stringify({
     draftId: entry.draftId,
     version: entry.version,
+    status: entry.status,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
     scope: entry.scope,
@@ -187,6 +214,7 @@ function rowToEntry(row, workspaceRoot) {
       ...(payload || {}),
       draftId: row.draft_id,
       version: row.version,
+      status: normalizePendingStatus(row.status),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       scope: {
@@ -233,6 +261,7 @@ function upsertEntryRow(db, entry) {
       slot_key,
       draft_id,
       version,
+      status,
       created_at,
       updated_at,
       scope_channel_id,
@@ -250,10 +279,11 @@ function upsertEntryRow(db, entry) {
       preview_note,
       payload_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(slot_key) DO UPDATE SET
       draft_id = excluded.draft_id,
       version = excluded.version,
+      status = excluded.status,
       created_at = excluded.created_at,
       updated_at = excluded.updated_at,
       scope_channel_id = excluded.scope_channel_id,
@@ -274,6 +304,7 @@ function upsertEntryRow(db, entry) {
     entry.slotKey,
     entry.draftId,
     entry.version,
+    normalizePendingStatus(entry.status),
     entry.createdAt,
     entry.updatedAt,
     entry.scope?.channelId || "feishu",
@@ -374,6 +405,7 @@ export function normalizeEntry(raw, workspaceRoot = null) {
     ...raw,
     draftId,
     version,
+    status: normalizePendingStatus(raw.status),
     scope,
     requester,
     target,
@@ -389,6 +421,7 @@ export function summarizePending(entry) {
     filePath: entry.filePath || null,
     storageType: entry.storageType || "sqlite",
     slotKey: entry.slotKey,
+    status: normalizePendingStatus(entry.status),
     kind: entry.kind,
     headline: entry.headline,
     previewNote: entry.previewNote || "",
@@ -517,7 +550,11 @@ export function requesterMatches(entry, requester) {
 }
 
 export function resolveEntries({ workspaceRoot, scope, requester, repoQuery, draftQuery }) {
-  const all = dedupeEntries(readAllEntries(workspaceRoot).filter((entry) => scopeMatches(entry.scope, scope)));
+  const all = dedupeEntries(
+    readAllEntries(workspaceRoot).filter(
+      (entry) => scopeMatches(entry.scope, scope) && normalizePendingStatus(entry.status) === PENDING_STATUS_PENDING
+    )
+  );
   const requesterFiltered = requester ? all.filter((entry) => requesterMatches(entry, requester)) : all;
   const draftFiltered = requesterFiltered.filter((entry) => entryMatchesDraftQuery(entry, draftQuery));
   const repoFiltered = draftFiltered.filter((entry) => entryMatchesRepoQuery(entry, repoQuery));
@@ -549,7 +586,22 @@ export function resolveEntries({ workspaceRoot, scope, requester, repoQuery, dra
 export function createOrReplacePendingEntry(workspaceRoot, payload) {
   return withDatabase(workspaceRoot, (db) =>
     runTransaction(db, () => {
-      const entry = normalizeEntry(payload, workspaceRoot);
+      const entry = normalizeEntry(
+        {
+          ...payload,
+          status: PENDING_STATUS_PENDING
+        },
+        workspaceRoot
+      );
+      const existingRow = db.prepare("SELECT * FROM pending_actions WHERE slot_key = ?").get(entry.slotKey);
+      const existingEntry = existingRow ? rowToEntry(existingRow, workspaceRoot) : null;
+      if (existingEntry && normalizePendingStatus(existingEntry.status) === PENDING_STATUS_EXECUTING) {
+        return {
+          ok: false,
+          error: "slot_executing",
+          current: existingEntry
+        };
+      }
       upsertEntryRow(db, entry);
 
       const sameScopeRows = db
@@ -571,9 +623,15 @@ export function createOrReplacePendingEntry(workspaceRoot, payload) {
 
       const sameRepoOtherRequesters = sameScopeRows
         .map((row) => rowToEntry(row, workspaceRoot))
-        .filter((candidate) => candidate && !requesterMatches(candidate, entry.requester));
+        .filter(
+          (candidate) =>
+            candidate &&
+            !requesterMatches(candidate, entry.requester) &&
+            [PENDING_STATUS_PENDING, PENDING_STATUS_EXECUTING].includes(normalizePendingStatus(candidate.status))
+        );
 
       return {
+        ok: true,
         entry,
         sameRepoOtherRequesters: dedupeEntries(sameRepoOtherRequesters)
       };
@@ -581,9 +639,57 @@ export function createOrReplacePendingEntry(workspaceRoot, payload) {
   );
 }
 
-export function deletePendingEntry(workspaceRoot, entry) {
-  return withDatabase(workspaceRoot, (db) => {
-    const result = db.prepare("DELETE FROM pending_actions WHERE slot_key = ?").run(entry.slotKey);
-    return result.changes > 0;
-  });
+function transitionEntryStatus(workspaceRoot, draftId, fromStatuses, toStatus) {
+  return withDatabase(workspaceRoot, (db) =>
+    runTransaction(db, () => {
+      const row = db.prepare("SELECT * FROM pending_actions WHERE draft_id = ?").get(draftId);
+      if (!row) {
+        return {
+          ok: false,
+          error: "not_found",
+          current: null
+        };
+      }
+
+      const current = rowToEntry(row, workspaceRoot);
+      const currentStatus = normalizePendingStatus(current?.status);
+      if (!fromStatuses.includes(currentStatus)) {
+        return {
+          ok: false,
+          error: "not_pending",
+          current
+        };
+      }
+
+      const updated = normalizeEntry(
+        {
+          ...current,
+          status: toStatus,
+          updatedAt: new Date().toISOString()
+        },
+        workspaceRoot
+      );
+      upsertEntryRow(db, updated);
+      return {
+        ok: true,
+        entry: updated
+      };
+    })
+  );
+}
+
+export function cancelPendingEntry(workspaceRoot, draftId) {
+  return transitionEntryStatus(workspaceRoot, draftId, [PENDING_STATUS_PENDING], PENDING_STATUS_CANCELLED);
+}
+
+export function claimPendingEntryExecution(workspaceRoot, draftId) {
+  return transitionEntryStatus(workspaceRoot, draftId, [PENDING_STATUS_PENDING], PENDING_STATUS_EXECUTING);
+}
+
+export function completePendingEntryExecution(workspaceRoot, draftId) {
+  return transitionEntryStatus(workspaceRoot, draftId, [PENDING_STATUS_EXECUTING], PENDING_STATUS_DONE);
+}
+
+export function releasePendingEntryExecution(workspaceRoot, draftId) {
+  return transitionEntryStatus(workspaceRoot, draftId, [PENDING_STATUS_EXECUTING], PENDING_STATUS_PENDING);
 }

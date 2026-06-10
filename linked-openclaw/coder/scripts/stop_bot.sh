@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PID_FILE="${OPENCLAW_PID_FILE:-${APP_DIR}/data/openclaw/openclaw-gateway.pid}"
-NULL_FILE="${OPENCLAW_NULL_FILE:-/tmp/openclaw-gateway.null}"
+PID_FILE="${CODER_BOT_PID_FILE:-${APP_DIR}/data/coder-bot.pid}"
+NULL_FILE="${CODER_BOT_NULL_FILE:-/tmp/coder-bot.null}"
 
 : >"${NULL_FILE}"
 

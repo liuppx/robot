@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 
-import { enrichIssueBodyWithLatestAttachments, parseArgs, printJson, required } from "./lib/common.mjs";
+import {
+  enrichIssueBodyWithLatestAttachments,
+  loadGitHubRepoDefaults,
+  parseArgs,
+  printJson,
+  required,
+  workspaceRootFromTool
+} from "./lib/common.mjs";
 import { auditGitHubTool, summarizeCommentPayload } from "./lib/github_audit.mjs";
 import { enrichTextWithUploadedAttachments } from "./lib/github_attachments.mjs";
 import { resolveGitHubToken } from "./lib/github_app.mjs";
@@ -30,6 +37,7 @@ function parseIssueNumber(args, fromUrl) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const defaults = loadGitHubRepoDefaults(workspaceRootFromTool(import.meta.url));
   // 默认 preview，配合确认桥先展示再执行。
   const execute = args.execute === "true";
   const fromUrl = args.issueUrl ? parseIssueUrl(args.issueUrl) : null;
@@ -37,8 +45,8 @@ async function main() {
     throw new Error("issueUrl must look like https://github.com/<owner>/<repo>/issues/<number>");
   }
 
-  const owner = args.owner || fromUrl?.owner || process.env.GITHUB_DEFAULT_OWNER || process.env.GITHUB_OWNER;
-  const repo = args.repo || fromUrl?.repo || process.env.GITHUB_DEFAULT_REPO || process.env.GITHUB_REPO;
+  const owner = args.owner || fromUrl?.owner || defaults.owner;
+  const repo = args.repo || fromUrl?.repo || defaults.repo;
   const issueNumber = parseIssueNumber(args, fromUrl);
   const rawBody = required("body", args.body);
   const previewBody = enrichIssueBodyWithLatestAttachments(rawBody);

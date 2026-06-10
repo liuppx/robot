@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 export const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,6 +53,46 @@ export function runNodeJson(scriptPath, args = [], options = {}) {
   };
 }
 
+export function runNodeJsonAsync(scriptPath, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [scriptPath, ...args], {
+      cwd: appRoot,
+      env: {
+        ...process.env,
+        ...(options.env || {})
+      },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      const raw = (stdout || stderr).trim();
+      let json = null;
+      try {
+        json = raw ? JSON.parse(raw) : null;
+      } catch {
+        json = { raw };
+      }
+      resolve({
+        result: {
+          status: code,
+          signal
+        },
+        raw,
+        json
+      });
+    });
+  });
+}
+
 export function installFakeCreateTool(toolPath) {
   fs.writeFileSync(
     toolPath,
@@ -91,6 +131,11 @@ if (args.execute !== "true") {
     }
   }, null, 2));
   process.exit(0);
+}
+
+const sleepMs = Number(process.env.FAKE_CREATE_SLEEP_MS || "0");
+if (sleepMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, sleepMs));
 }
 
 console.log(JSON.stringify({
