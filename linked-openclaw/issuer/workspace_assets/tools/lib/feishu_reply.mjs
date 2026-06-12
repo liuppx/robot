@@ -99,6 +99,31 @@ export async function sendFeishuText({ workspaceRoot, receiveIdType, receiveId, 
   });
 }
 
+export async function sendFeishuPost({ workspaceRoot, receiveIdType, receiveId, title, content }) {
+  if (!receiveIdType || !receiveId || !title || !Array.isArray(content)) {
+    return null;
+  }
+
+  const token = await tenantAccessToken(workspaceRoot);
+  return fetchJson(`${FEISHU_API_BASE}/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({
+      receive_id: receiveId,
+      msg_type: "post",
+      content: JSON.stringify({
+        zh_cn: {
+          title: String(title),
+          content
+        }
+      })
+    })
+  });
+}
+
 export async function sendFeishuTextForEvent(workspaceRoot, event, text) {
   const target = feishuReceiveTargetFromEvent(event);
   if (!target?.receiveId) {
@@ -109,5 +134,19 @@ export async function sendFeishuTextForEvent(workspaceRoot, event, text) {
     receiveIdType: target.receiveIdType,
     receiveId: target.receiveId,
     text
+  });
+}
+
+export async function sendFeishuPostForEvent(workspaceRoot, event, post) {
+  const target = feishuReceiveTargetFromEvent(event);
+  if (!target?.receiveId) {
+    return null;
+  }
+  return sendFeishuPost({
+    workspaceRoot,
+    receiveIdType: target.receiveIdType,
+    receiveId: target.receiveId,
+    title: post?.title,
+    content: post?.content
   });
 }

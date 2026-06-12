@@ -285,6 +285,70 @@ test("pending_action execute keeps preview-time attachments across confirm execu
   assert.equal(allEntries.json.entries[0].status, "done");
 });
 
+test("pending_action execute omits empty labels and assignees flags", () => {
+  const root = makeTempDir("issuer-pending-empty-arrays-");
+  fs.mkdirSync(path.join(root, "tools"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "tools", "github_issue_create.mjs"),
+    `#!/usr/bin/env node
+const args = {};
+for (let index = 2; index < process.argv.length; index += 1) {
+  const token = process.argv[index];
+  if (!token.startsWith("--")) continue;
+  const key = token.slice(2);
+  const next = process.argv[index + 1];
+  if (!next || next.startsWith("--")) {
+    args[key] = "true";
+    continue;
+  }
+  args[key] = next;
+  index += 1;
+}
+console.log(JSON.stringify({
+  ok: true,
+  args,
+  result: {
+    number: 321,
+    title: args.title || "stub issue",
+    state: "open",
+    htmlUrl: "https://github.com/yeying-community/robot/issues/321"
+  }
+}, null, 2));
+`
+  );
+
+  const env = {
+    ...testEnv(root),
+    ISSUER_WORKSPACE_ROOT: root
+  };
+
+  const created = createDraft(env, {
+    conversationId: "chat-empty-arrays",
+    requesterId: "user-a",
+    requesterLabel: "UserA",
+    headline: "robot empty arrays draft",
+    params: {
+      owner: "yeying-community",
+      repo: "robot",
+      title: "T-empty-arrays",
+      body: "B-empty-arrays",
+      labels: [],
+      assignees: []
+    }
+  });
+  assert.equal(created.result.status, 0);
+
+  const executed = runNodeJson(
+    pendingActionPath,
+    ["--action", "execute", "--conversationId", "chat-empty-arrays", "--requesterId", "user-a", "--repoQuery", "robot"],
+    { env }
+  );
+  assert.equal(executed.result.status, 0);
+  assert.equal(executed.json.ok, true);
+  assert.equal(executed.json.executed.args.labels, undefined);
+  assert.equal(executed.json.executed.args.assignees, undefined);
+});
+
 test("pending_action execute atomically claims a draft so concurrent executes do not double-run", async () => {
   const root = makeTempDir("issuer-pending-race-");
   fs.mkdirSync(path.join(root, "tools"), { recursive: true });
@@ -351,4 +415,34 @@ test("pending_action create writes explicit follow owner into issue body", () =>
 
   assert.equal(created.result.status, 0);
   assert.match(created.json.pending.params.body, /跟进人：张三/);
+});
+
+test("pending_action create resolves bare repo target with default owner", () => {
+  const root = makeTempDir("issuer-pending-bare-repo-");
+  const envFile = path.join(root, "config", "github-app.config.env");
+  fs.mkdirSync(path.dirname(envFile), { recursive: true });
+  fs.writeFileSync(envFile, "GITHUB_DEFAULT_OWNER=yeying-community\nGITHUB_DEFAULT_REPO=robot\n");
+  const env = {
+    ...testEnv(root),
+    ISSUER_WORKSPACE_ROOT: root,
+    GITHUB_ENV_FILE: envFile
+  };
+
+  const created = createDraft(env, {
+    conversationId: "chat-bare-repo",
+    requesterId: "user-a",
+    requesterLabel: "UserA",
+    headline: "robot bare repo draft",
+    params: {
+      repo: "robot",
+      title: "T-bare-repo",
+      body: "B-bare-repo"
+    }
+  });
+
+  assert.equal(created.result.status, 0);
+  assert.equal(created.json.pending.target.owner, "yeying-community");
+  assert.equal(created.json.pending.target.repo, "robot");
+  assert.equal(created.json.pending.target.repoKey, "yeying-community/robot");
+  assert.doesNotMatch(created.json.pending.slotKey, /unknown-repo/);
 });

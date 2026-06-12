@@ -9,15 +9,45 @@ export const ISSUER_COMMANDS = [
   },
   {
     name: "/confirm",
-    usage: "/confirm [repo|draft:<id>]",
-    example: "/confirm robot",
-    description: "提交当前待执行草案；多草案时必须显式指定仓库或 draft。"
+    usage: "/confirm [id]",
+    example: "/confirm abcd",
+    description: "提交当前待执行草案；多草案时必须显式指定草案 ID，同群成员均可确认。"
   },
   {
     name: "/cancel",
-    usage: "/cancel [repo|draft:<id>]",
-    example: "/cancel draft:abcd1234",
-    description: "取消当前待执行草案。"
+    usage: "/cancel [id]",
+    example: "/cancel abcd",
+    description: "取消当前待执行草案；同群成员均可取消。"
+  },
+  {
+    name: "/show",
+    usage: "/show <id|all>",
+    example: "/show all",
+    description: "查看指定草案详情，或列出当前群全部待处理草案。"
+  },
+  {
+    name: "/edit",
+    usage: "/edit <id> <要求>",
+    example: "/edit abcd 标题更聚焦，正文补上复现步骤",
+    description: "按自然语言要求整份改写草案，再继续确认。"
+  },
+  {
+    name: "/issue",
+    usage: "/issue <repo>",
+    example: "/issue robot",
+    description: "列出指定仓库最近 open issues。"
+  },
+  {
+    name: "/close",
+    usage: "/close <repo> #<number>",
+    example: "/close robot #123",
+    description: "直接关闭指定仓库的 issue，必须明确 issue 编号。"
+  },
+  {
+    name: "/assignees",
+    usage: "/assignees <repo> #<number> <who>",
+    example: "/assignees robot #123 刘鑫",
+    description: "追加 GitHub 指派人，不替换已有指派人。"
   }
 ];
 
@@ -37,8 +67,15 @@ export function buildRepoAliasesSection(policy) {
 }
 
 export function buildCommandsSection() {
-  return buildList(
+  const draftCommands = ISSUER_COMMANDS.filter((command) => ["/confirm", "/cancel", "/show", "/edit"].includes(command.name));
+  const directCommands = ISSUER_COMMANDS.filter((command) => !["/confirm", "/cancel", "/show", "/edit"].includes(command.name));
+
+  return [
     "命令：",
-    ISSUER_COMMANDS.map((command) => `- ${command.usage}\n  说明：${command.description}\n  示例：${command.example}`)
-  );
+    "草案操作：",
+    ...draftCommands.map((command) => `- ${command.usage}\n  说明：${command.description}\n  示例：${command.example}`),
+    "",
+    "直接命令：",
+    ...directCommands.map((command) => `- ${command.usage}\n  说明：${command.description}\n  示例：${command.example}`)
+  ].join("\n");
 }

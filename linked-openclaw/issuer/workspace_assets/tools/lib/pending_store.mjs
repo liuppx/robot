@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { normalizeRepoInput, repoKeyFromParts } from "./common.mjs";
+import { loadGitHubRepoDefaults, normalizeRepoInput, repoKeyFromParts } from "./common.mjs";
 import { loadSQLite } from "./sqlite_runtime.mjs";
 
 const { DatabaseSync } = await loadSQLite();
@@ -363,19 +363,21 @@ export function requesterKey(requester) {
   return String(requester?.id || requester?.label || "anonymous").trim() || "anonymous";
 }
 
-export function buildTargetFromParams(params) {
+export function buildTargetFromParams(params, workspaceRoot = null) {
   const owner = params?.owner || "";
   const repo = params?.repo || "";
   const normalized = owner && repo ? normalizeRepoInput(`${owner}/${repo}`) : normalizeRepoInput(params?.issueUrl || "");
   const issueNumberRaw = params?.issueNumber || params?.number || null;
   const issueNumber = issueNumberRaw ? Number(issueNumberRaw) : null;
+  const defaults = workspaceRoot ? loadGitHubRepoDefaults(workspaceRoot) : { owner: "", repo: "" };
+  const fallbackOwner = !owner && repo && defaults.owner ? defaults.owner : "";
 
   return {
-    owner: normalized?.owner || owner || null,
+    owner: normalized?.owner || owner || fallbackOwner || null,
     repo: normalized?.repo || repo || null,
     repoKey:
       normalized?.repoKey ||
-      (owner && repo ? repoKeyFromParts(owner, repo) : ""),
+      ((owner || fallbackOwner) && repo ? repoKeyFromParts(owner || fallbackOwner, repo) : ""),
     issueNumber: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null
   };
 }
@@ -397,7 +399,14 @@ export function normalizeEntry(raw, workspaceRoot = null) {
 
   const scope = raw.scope || {};
   const requester = raw.requester || null;
-  const target = raw.target || buildTargetFromParams(raw.params || {});
+  const derivedTarget = buildTargetFromParams(raw.params || {}, workspaceRoot);
+  const target =
+    raw.target?.repoKey || raw.target?.owner
+      ? raw.target
+      : {
+          ...(raw.target || {}),
+          ...derivedTarget
+        };
   const slotKey = raw.slotKey || slotKeyFor(scope, requester, target);
   const draftId = raw.draftId || crypto.randomUUID();
   const version = Number.isInteger(raw.version) ? raw.version : 2;
@@ -495,7 +504,7 @@ export function normalizeDraftQuery(draftQuery) {
     return null;
   }
 
-  const normalized = raw.replace(/^draft\s*:\s*/i, "").trim().toLowerCase();
+  const normalized = raw.trim().toLowerCase();
   if (!normalized) {
     return null;
   }
@@ -692,4 +701,53 @@ export function completePendingEntryExecution(workspaceRoot, draftId) {
 
 export function releasePendingEntryExecution(workspaceRoot, draftId) {
   return transitionEntryStatus(workspaceRoot, draftId, [PENDING_STATUS_EXECUTING], PENDING_STATUS_PENDING);
+}
+
+export function updatePendingEntry(workspaceRoot, draftId, updater) {
+  return withDatabase(workspaceRoot, (db) =>
+    runTransaction(db, () => {
+      const row = db.prepare("SELECT * FROM pending_actions WHERE draft_id = ?").get(draftId);
+      if (!row) {
+        return {
+          ok: false,
+          error: "not_found",
+          current: null
+        };
+      }
+
+      const current = rowToEntry(row, workspaceRoot);
+      const currentStatus = normalizePendingStatus(current?.status);
+      if (currentStatus !== PENDING_STATUS_PENDING) {
+        return {
+          ok: false,
+          error: "not_pending",
+          current
+        };
+      }
+
+      const patch = updater(current) || {};
+      const nextParams = {
+        ...(current.params || {}),
+        ...(patch.params || {})
+      };
+      const nextTarget = patch.target || buildTargetFromParams(nextParams, workspaceRoot);
+      const updated = normalizeEntry(
+        {
+          ...current,
+          ...patch,
+          status: PENDING_STATUS_PENDING,
+          updatedAt: new Date().toISOString(),
+          params: nextParams,
+          target: nextTarget,
+          slotKey: slotKeyFor(current.scope, current.requester, nextTarget)
+        },
+        workspaceRoot
+      );
+      upsertEntryRow(db, updated);
+      return {
+        ok: true,
+        entry: updated
+      };
+    })
+  );
 }
