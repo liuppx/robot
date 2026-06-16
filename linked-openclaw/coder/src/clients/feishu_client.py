@@ -9,7 +9,6 @@ from typing import Any
 
 import requests
 
-from src.clients.openclaw_client import load_openclaw_config_json, resolve_secret_input
 from src.utils.helpers import short_text, slugify
 
 
@@ -22,7 +21,7 @@ def build_feishu_thread_peer_id(chat_id: str, thread_id: str) -> str:
 
 
 def build_issue_agent_id(config: dict[str, Any], repo_full_name: str, issue_number: int) -> str:
-    prefix = slugify(config.get("openclaw_session_prefix", "gh"), limit=12)
+    prefix = slugify(config.get("issue_session_prefix", "gh"), limit=12)
     repo_slug = slugify(repo_full_name.replace("/", "-"), limit=48)
     if prefix:
         return f"{prefix}-{repo_slug}-issue-{issue_number}"
@@ -49,19 +48,8 @@ def is_feishu_route_session_key(value: str | None) -> bool:
 
 
 def resolve_feishu_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
-    payload = load_openclaw_config_json(config)
-    feishu_cfg = ((payload.get("channels") or {}).get("feishu") or {})
-    if not isinstance(feishu_cfg, dict):
-        feishu_cfg = {}
-
-    app_id = str(feishu_cfg.get("appId") or os.getenv("FEISHU_APP_ID", "")).strip()
-    app_secret = resolve_secret_input(feishu_cfg.get("appSecret")) or os.getenv("FEISHU_APP_SECRET", "").strip()
-
-    configured_groups = [
-        str(item).strip()
-        for item in (feishu_cfg.get("groupAllowFrom") or [])
-        if str(item).strip()
-    ]
+    app_id = str(config.get("feishu_app_id") or os.getenv("FEISHU_APP_ID", "")).strip()
+    app_secret = str(config.get("feishu_app_secret") or os.getenv("FEISHU_APP_SECRET", "")).strip()
     configured_chat_ids = [
         str(item).strip()
         for item in (config.get("feishu_handoff_chat_ids") or [])
@@ -70,26 +58,21 @@ def resolve_feishu_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
     if config.get("feishu_handoff_chat_id"):
         configured_chat_ids.insert(0, str(config["feishu_handoff_chat_id"]).strip())
     chat_ids: list[str] = []
-    for item in [*configured_chat_ids, *configured_groups]:
+    for item in configured_chat_ids:
         normalized = str(item).strip()
         if normalized and normalized not in chat_ids:
             chat_ids.append(normalized)
     chat_id = chat_ids[0] if chat_ids else ""
-    account_id = config["feishu_account_id"]
-
     if not app_id or not app_secret:
-        raise RuntimeError("Feishu appId/appSecret is missing from OpenClaw config or env")
+        raise RuntimeError("Feishu appId/appSecret is missing from env/config")
     if not chat_id:
-        raise RuntimeError(
-            "FEISHU_HANDOFF_CHAT_ID(S) are empty and channels.feishu.groupAllowFrom has no group"
-        )
+        raise RuntimeError("FEISHU_HANDOFF_CHAT_ID(S) are empty")
 
     return {
         "app_id": app_id,
         "app_secret": app_secret,
         "chat_id": chat_id,
         "chat_ids": chat_ids,
-        "account_id": account_id,
     }
 
 
@@ -165,24 +148,35 @@ def parse_feishu_message_text(item: dict[str, Any]) -> str:
     if msg_type == "text":
         return str(parsed.get("text") or "").strip()
     if msg_type == "post":
-        title = str(parsed.get("title") or "").strip()
+        post_payload = parsed
+        if isinstance(parsed, dict):
+            for locale_key in ("zh_cn", "en_us", "ja_jp"):
+                candidate = parsed.get(locale_key)
+                if isinstance(candidate, dict):
+                    post_payload = candidate
+                    break
+        title = str(post_payload.get("title") or "").strip()
         lines: list[str] = []
-        for paragraph in parsed.get("content") or []:
+        for paragraph in post_payload.get("content") or []:
             if not isinstance(paragraph, list):
                 continue
             parts: list[str] = []
             for block in paragraph:
                 if not isinstance(block, dict):
                     continue
-                text = str(block.get("text") or "").strip()
-                if text:
-                    parts.append(text)
+                raw_text = str(block.get("text") or "")
+                if raw_text.strip():
+                    parts.append(raw_text)
                     continue
                 tag = str(block.get("tag") or "").strip().lower()
                 if tag == "at":
                     mention_name = str(block.get("user_name") or block.get("name") or "@").strip()
                     if mention_name:
                         parts.append(f"@{mention_name}" if not mention_name.startswith("@") else mention_name)
+                elif tag == "a":
+                    link_text = str(block.get("text") or block.get("href") or "")
+                    if link_text.strip():
+                        parts.append(link_text)
                 elif tag == "img":
                     parts.append("[image]")
             line = "".join(parts).strip()
@@ -224,6 +218,34 @@ def feishu_send_text_message(config: dict[str, Any], runtime: dict[str, Any], ch
     message_id = str(payload.get("message_id") or "").strip()
     if not message_id:
         raise RuntimeError("Feishu send message succeeded but message_id is missing")
+    return message_id
+
+
+def feishu_send_post_message(
+    config: dict[str, Any],
+    runtime: dict[str, Any],
+    chat_id: str,
+    title: str,
+    content: list[list[dict[str, Any]]],
+) -> str:
+    payload = feishu_request(
+        config,
+        runtime,
+        "POST",
+        "/im/v1/messages",
+        params={"receive_id_type": "chat_id"},
+        json_body={
+            "receive_id": chat_id,
+            "msg_type": "post",
+            "content": json.dumps(
+                {"zh_cn": {"title": str(title or "").strip(), "content": content}},
+                ensure_ascii=False,
+            ),
+        },
+    )
+    message_id = str(payload.get("message_id") or "").strip()
+    if not message_id:
+        raise RuntimeError("Feishu send post message succeeded but message_id is missing")
     return message_id
 
 
@@ -340,6 +362,32 @@ def normalize_confirm_text(value: str) -> str:
     return re.sub(r"\s+", " ", text).lower()
 
 
+def command_keyword_mentioned(candidate: str, command: str) -> bool:
+    escaped = re.escape(command)
+    pattern = rf"(^|[^a-z0-9._/-]){escaped}($|[^a-z0-9._-])"
+    return re.search(pattern, candidate) is not None
+
+
+def message_matches_natural_confirm(text: str) -> bool:
+    normalized_text = normalize_confirm_text(text)
+    if not normalized_text:
+        return False
+
+    candidates = [normalized_text, *[normalize_confirm_text(line) for line in text.splitlines() if line.strip()]]
+    for candidate in candidates:
+        compact = re.sub(r"[\s`'\"“”‘’。，、,.!！?？:：;；()（）\[\]{}<>《》_-]+", "", candidate)
+        if not compact:
+            continue
+        if re.fullmatch(
+            r"(?:请|麻烦)?(?:直接|就)?(?:开始)?(?:执行|跑|做|采用|按|选|选择|确认|同意|实施)?"
+            r"(?:方案(?:1|一)|plan1)"
+            r"(?:(?:开始)?执行|可以执行|确认执行|开始|吧|可以|确认|就行|即可|处理|实施|做)?",
+            compact,
+        ):
+            return True
+    return False
+
+
 def message_matches_confirm_keywords(text: str, keywords: list[str]) -> bool:
     normalized_text = normalize_confirm_text(text)
     if not normalized_text:
@@ -353,6 +401,10 @@ def message_matches_confirm_keywords(text: str, keywords: list[str]) -> bool:
         for candidate in candidates:
             if candidate == normalized_keyword or candidate.startswith(f"{normalized_keyword} "):
                 return True
+            if normalized_keyword.startswith("/") and command_keyword_mentioned(candidate, normalized_keyword):
+                return True
+    if message_matches_natural_confirm(text):
+        return True
     return False
 
 

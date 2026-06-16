@@ -106,3 +106,32 @@ def parse_codex_jsonl_usage(text: str) -> dict[str, int] | None:
             usage[key] = int(usage_payload.get(key) or 0)
         last_usage = usage
     return last_usage
+
+
+def parse_codex_jsonl_error_messages(text: str) -> list[str]:
+    messages: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        event_type = str(payload.get("type") or "").strip()
+        if event_type == "error":
+            message = str(payload.get("message") or "").strip()
+            if message:
+                messages.append(message)
+            continue
+        if event_type != "turn.failed":
+            continue
+        error_payload = payload.get("error") or {}
+        if not isinstance(error_payload, dict):
+            continue
+        message = str(error_payload.get("message") or "").strip()
+        if message:
+            messages.append(message)
+    return messages

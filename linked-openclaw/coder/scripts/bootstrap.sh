@@ -5,11 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${APP_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 ENV_FILE="${ENV_FILE:-${APP_DIR}/config/coder-bot.env}"
 ENV_TEMPLATE="${ENV_TEMPLATE:-${APP_DIR}/config/coder-bot.env.template}"
-OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${APP_DIR}/config/openclaw.json}"
-OPENCLAW_RUNTIME_CONFIG_PATH="${OPENCLAW_RUNTIME_CONFIG_PATH:-${APP_DIR}/data/openclaw/runtime/openclaw.runtime.json}"
-OPENCLAW_CONFIG_TEMPLATE="${OPENCLAW_CONFIG_TEMPLATE:-${APP_DIR}/config/openclaw.json.template}"
 SERVICE_NAME="${SERVICE_NAME:-coder-bot}"
-GATEWAY_SERVICE_NAME="${GATEWAY_SERVICE_NAME:-openclaw-gateway}"
 BOT_USER="${BOT_USER:-$(id -un)}"
 UV_BIN="${UV_BIN:-$(command -v uv || true)}"
 UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/coder-bot-uv-cache}"
@@ -46,17 +42,6 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   fail "env file not found: ${ENV_FILE}"
 fi
 
-if [[ ! -f "${OPENCLAW_CONFIG_PATH}" ]]; then
-  if [[ -f "${OPENCLAW_CONFIG_TEMPLATE}" ]]; then
-    cp "${OPENCLAW_CONFIG_TEMPLATE}" "${OPENCLAW_CONFIG_PATH}"
-    log "created ${OPENCLAW_CONFIG_PATH} from ${OPENCLAW_CONFIG_TEMPLATE}"
-    log "fill in the Feishu and gateway values in ${OPENCLAW_CONFIG_PATH}, then rerun bootstrap"
-    exit 1
-  else
-    fail "OpenClaw config not found: ${OPENCLAW_CONFIG_PATH}"
-  fi
-fi
-
 log "syncing dependencies with uv"
 "${UV_BIN}" sync --frozen --directory "${APP_DIR}"
 
@@ -81,6 +66,8 @@ required = [
     "GITHUB_FORK_OWNER",
     "ALLOWED_REPOS",
     "GITHUB_CLONE_SSH_KEY_PATH",
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
 ]
 
 placeholder_values = {
@@ -96,11 +83,16 @@ for key in required:
     elif value in placeholder_values:
         errors.append(f"{key} still uses template placeholder: {value}")
 
-execution_backend = values.get("EXECUTION_BACKEND", "openclaw").strip().lower() or "openclaw"
-openclaw_model = values.get("OPENCLAW_MODEL", "router/gpt-5.4").strip() or "router/gpt-5.4"
-if execution_backend == "openclaw" and openclaw_model.startswith("router/"):
-    if not values.get("ROUTER_API_KEY", "").strip():
-        errors.append("OPENCLAW_MODEL uses router/* but ROUTER_API_KEY is empty")
+execution_backend = values.get("EXECUTION_BACKEND", "codex").strip().lower() or "codex"
+feishu_handoff = [
+    values.get("FEISHU_HANDOFF_CHAT_ID", "").strip(),
+    values.get("FEISHU_HANDOFF_CHAT_IDS", "").strip(),
+]
+
+if execution_backend not in {"codex", "claude"}:
+    errors.append(f"EXECUTION_BACKEND must be codex or claude, got: {execution_backend}")
+if not any(feishu_handoff):
+    errors.append("FEISHU_HANDOFF_CHAT_ID or FEISHU_HANDOFF_CHAT_IDS must be set")
 
 if errors:
     print("env check failed:")
@@ -111,15 +103,6 @@ if errors:
 print("env check passed")
 PY
 
-log "preparing OpenClaw runtime config"
-(
-  cd "${APP_DIR}"
-  CODER_BOT_ENV_FILE="${ENV_FILE}" \
-  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
-  OPENCLAW_RUNTIME_CONFIG_PATH="${OPENCLAW_RUNTIME_CONFIG_PATH}" \
-    "${UV_BIN}" run --frozen coder-bot --env-file "${ENV_FILE}" prepare-openclaw-runtime
-)
-
 log "running coder-bot doctor"
 (
   cd "${APP_DIR}"
@@ -128,22 +111,18 @@ log "running coder-bot doctor"
 )
 
 if [[ "${INSTALL_SYSTEMD}" == "true" ]]; then
-  log "installing systemd services ${GATEWAY_SERVICE_NAME} + ${SERVICE_NAME}"
+  log "installing systemd service ${SERVICE_NAME}"
   (
     cd "${APP_DIR}"
     BOT_USER="${BOT_USER}" ENV_FILE="${ENV_FILE}" SERVICE_NAME="${SERVICE_NAME}" \
-      GATEWAY_SERVICE_NAME="${GATEWAY_SERVICE_NAME}" OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
-      OPENCLAW_RUNTIME_CONFIG_PATH="${OPENCLAW_RUNTIME_CONFIG_PATH}" \
       UV_BIN="${UV_BIN}" ./scripts/install_systemd.sh
   )
 else
   log "skipping systemd install because INSTALL_SYSTEMD=${INSTALL_SYSTEMD}"
-  log "manual gateway start: ./scripts/start_gateway.sh"
-  log "manual bot start: CODER_BOT_ENV_FILE=${ENV_FILE} ${UV_BIN} run --frozen gunicorn -c ${APP_DIR}/config/gunicorn.conf.py src.main:APP"
+  log "manual bot start: ENV_FILE=${ENV_FILE} ./scripts/start_bot.sh"
 fi
 
 log "bootstrap completed"
 log "health check: curl -s http://127.0.0.1:9081/health"
-log "gateway status: ./scripts/status_gateway.sh"
 log "service status: sudo systemctl status --no-pager ${SERVICE_NAME}"
 log "service logs: tail -f ${APP_DIR}/data/logs/gunicorn.error.log"

@@ -7,6 +7,7 @@ LOG_DIR="${APP_DIR}/data/logs"
 LOG_PATH="${CODER_BOT_LOG_PATH:-${LOG_DIR}/gunicorn.error.log}"
 PID_FILE="${CODER_BOT_PID_FILE:-${APP_DIR}/data/coder-bot.pid}"
 NULL_FILE="${CODER_BOT_NULL_FILE:-/tmp/coder-bot.null}"
+HEALTH_URL="${CODER_BOT_HEALTH_URL:-http://127.0.0.1:9081/health}"
 
 mkdir -p "$(dirname "${PID_FILE}")" "${LOG_DIR}"
 : >"${NULL_FILE}"
@@ -14,8 +15,10 @@ mkdir -p "$(dirname "${PID_FILE}")" "${LOG_DIR}"
 if [[ -f "${PID_FILE}" ]]; then
   old_pid="$(cat "${PID_FILE}" 2>"${NULL_FILE}" || true)"
   if [[ -n "${old_pid}" ]] && kill -0 "${old_pid}" 2>"${NULL_FILE}"; then
-    echo "already running: pid=${old_pid}"
-    exit 0
+    if curl -fsS "${HEALTH_URL}" >"${NULL_FILE}" 2>&1; then
+      echo "already running: pid=${old_pid}"
+      exit 0
+    fi
   fi
   rm -f "${PID_FILE}"
 fi
@@ -31,7 +34,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
   if [[ -f "${PID_FILE}" ]]; then
     pid="$(cat "${PID_FILE}" 2>"${NULL_FILE}" || true)"
-    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>"${NULL_FILE}"; then
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>"${NULL_FILE}" && curl -fsS "${HEALTH_URL}" >"${NULL_FILE}" 2>&1; then
       echo "started: pid=${pid}"
       exit 0
     fi

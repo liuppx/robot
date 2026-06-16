@@ -6,10 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from src.clients.github_client import build_app_jwt, get_installation_token
-from src.clients.openclaw_client import (
-    ensure_openclaw_runtime_config,
-    openclaw_provider_api_key_configured,
-)
 from src.db import init_db
 from src.utils.helpers import (
     command_exists,
@@ -24,8 +20,22 @@ from src.utils.helpers import (
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_FORK_OWNER = "YeYing2025"
 DEFAULT_EXECUTION_BACKEND = "codex"
-SUPPORTED_EXECUTION_BACKENDS = {"codex"}
+SUPPORTED_EXECUTION_BACKENDS = {"codex", "claude"}
 DEFAULT_GIT_AUTHOR_EMAIL = "coder-bot@local"
+DEFAULT_SUPPORTED_CODEX_MODELS = (
+    "gpt-5.2",
+    "gpt-5.3-codex",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+)
+DEFAULT_SUPPORTED_CLAUDE_MODELS = (
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-6",
+    "claude-opus-4-6-thinking",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+)
 
 
 def load_env_file(path: Path) -> None:
@@ -113,17 +123,6 @@ def prefer_existing_path(preferred: Path, legacy: Path | None = None) -> Path:
     return preferred.resolve(strict=False)
 
 
-def prefer_existing_command(preferred: str, legacy: str | None, *, base_dir: Path) -> str:
-    preferred_path = base_dir / preferred
-    if preferred_path.exists():
-        return preferred
-    if legacy:
-        legacy_path = base_dir / legacy
-        if legacy_path.exists():
-            return legacy
-    return preferred
-
-
 def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
     default_env_path = prefer_existing_path(
         APP_DIR / "config" / "coder-bot.env",
@@ -135,19 +134,6 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
     app_home = resolve_path_value(os.getenv("APP_HOME", default_app_home), base_dir=env_base_dir)
     data_dir = resolve_path_value(os.getenv("DATA_DIR", "data"), base_dir=app_home)
     secrets_dir = resolve_path_value(os.getenv("SECRETS_DIR", "secrets"), base_dir=app_home)
-    default_openclaw_bin = prefer_existing_command(
-        "scripts/openclaw-local",
-        "openclaw-local",
-        base_dir=app_home,
-    )
-    default_openclaw_config_path = (app_home / "config" / "openclaw.json").resolve(strict=False)
-    default_openclaw_runtime_config_path = (
-        data_dir / "openclaw" / "runtime" / "openclaw.runtime.json"
-    ).resolve(strict=False)
-    default_openclaw_state_dir = prefer_existing_path(
-        data_dir / "openclaw" / "state",
-        app_home / "feishu-state",
-    )
     default_codex_source_home = Path.home() / ".codex"
     default_codex_runtime_home = (data_dir / "codex" / "home").resolve(strict=False)
     allowed_repos = [
@@ -189,29 +175,10 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
             or DEFAULT_EXECUTION_BACKEND
         ),
         "repo_aliases": env_mapping("REPO_ALIASES"),
-        "openclaw_bin": env_command("OPENCLAW_BIN", default_openclaw_bin, base_dir=app_home),
-        "openclaw_model": os.getenv("OPENCLAW_MODEL", "router/gpt-5.4").strip()
-        or "router/gpt-5.4",
-        "openclaw_timeout": env_int("OPENCLAW_TIMEOUT", 1800),
-        "openclaw_config_path": env_path(
-            "OPENCLAW_CONFIG_PATH",
-            default_openclaw_config_path,
-            base_dir=app_home,
-        ),
-        "openclaw_runtime_config_path": env_path(
-            "OPENCLAW_RUNTIME_CONFIG_PATH",
-            default_openclaw_runtime_config_path,
-            base_dir=app_home,
-        ),
-        "openclaw_state_dir": env_path(
-            "OPENCLAW_STATE_DIR",
-            default_openclaw_state_dir,
-            base_dir=app_home,
-        ),
-        "openclaw_session_prefix": os.getenv("OPENCLAW_SESSION_PREFIX", "gh").strip() or "gh",
-        "openclaw_feishu_passive_mode": env_bool("OPENCLAW_FEISHU_PASSIVE_MODE", True),
+        "issue_session_prefix": os.getenv("ISSUE_SESSION_PREFIX", "gh").strip() or "gh",
         "codex_bin": env_command("CODEX_BIN", "codex", base_dir=app_home),
         "codex_model": os.getenv("CODEX_MODEL", "").strip(),
+        "supported_codex_models": env_csv("SUPPORTED_CODEX_MODELS", list(DEFAULT_SUPPORTED_CODEX_MODELS)),
         "codex_timeout": env_int("CODEX_TIMEOUT", 3600),
         "codex_source_home": env_path(
             "CODEX_SOURCE_HOME",
@@ -224,13 +191,24 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
             base_dir=app_home,
         ),
         "codex_use_dangerously_bypass": env_bool("CODEX_USE_DANGEROUSLY_BYPASS", True),
+        "claude_bin": env_command("CLAUDE_BIN", "claude", base_dir=app_home),
+        "claude_model": os.getenv("CLAUDE_MODEL", "").strip(),
+        "supported_claude_models": env_csv("SUPPORTED_CLAUDE_MODELS", list(DEFAULT_SUPPORTED_CLAUDE_MODELS)),
+        "claude_timeout": env_int("CLAUDE_TIMEOUT", 3600),
+        "issue_label_accepted_name": os.getenv("ISSUE_LABEL_ACCEPTED_NAME", "已受理").strip() or "已受理",
+        "issue_label_accepted_color": os.getenv("ISSUE_LABEL_ACCEPTED_COLOR", "0075ca").strip() or "0075ca",
+        "issue_label_in_progress_name": os.getenv("ISSUE_LABEL_IN_PROGRESS_NAME", "开发中").strip() or "开发中",
+        "issue_label_in_progress_color": os.getenv("ISSUE_LABEL_IN_PROGRESS_COLOR", "d4c5f9").strip() or "d4c5f9",
+        "issue_label_pr_ready_name": os.getenv("ISSUE_LABEL_PR_READY_NAME", "待合并").strip() or "待合并",
+        "issue_label_pr_ready_color": os.getenv("ISSUE_LABEL_PR_READY_COLOR", "0e8a16").strip() or "0e8a16",
         "issue_branch_prefix": os.getenv("ISSUE_BRANCH_PREFIX", "coder").strip() or "coder",
+        "feishu_app_id": os.getenv("FEISHU_APP_ID", "").strip(),
+        "feishu_app_secret": os.getenv("FEISHU_APP_SECRET", "").strip(),
         "feishu_handoff_chat_id": os.getenv("FEISHU_HANDOFF_CHAT_ID", "").strip(),
         "feishu_handoff_chat_ids": env_csv("FEISHU_HANDOFF_CHAT_IDS", []),
-        "feishu_account_id": os.getenv("FEISHU_ACCOUNT_ID", "default").strip() or "default",
         "feishu_confirm_keywords": env_csv(
             "FEISHU_CONFIRM_KEYWORDS",
-            ["/run", "开始执行", "确认执行", "可以执行"],
+            ["/run", "开始执行", "确认执行", "可以执行", "方案1", "方案一", "执行方案1", "执行方案一"],
         ),
         "feishu_chat_scan_limit": env_int("FEISHU_CHAT_SCAN_LIMIT", 30),
         "feishu_thread_scan_limit": env_int("FEISHU_THREAD_SCAN_LIMIT", 30),
@@ -258,7 +236,6 @@ def read_config(env_file_path: Path | None = None) -> dict[str, Any]:
             base_dir=app_home,
         ),
         "sync_script_path": os.getenv("SYNC_SCRIPT_PATH", "scripts/sync.sh").strip(),
-        "sync_script_abs_path": str((app_home / "scripts" / "sync.sh").resolve(strict=False)),
         "git_author_name": os.getenv("GIT_AUTHOR_NAME", service_actor_name()).strip()
         or service_actor_name(),
         "git_author_email": os.getenv("GIT_AUTHOR_EMAIL", DEFAULT_GIT_AUTHOR_EMAIL).strip()
@@ -307,26 +284,6 @@ def collect_config_errors(config: dict[str, Any]) -> list[str]:
     if backend not in SUPPORTED_EXECUTION_BACKENDS:
         errors.append("EXECUTION_BACKEND 只支持：" + "、".join(sorted(SUPPORTED_EXECUTION_BACKENDS)))
 
-    if not config["openclaw_bin"]:
-        errors.append("OPENCLAW_BIN 不能为空。")
-    elif not command_exists(config["openclaw_bin"]):
-        errors.append("OPENCLAW_BIN 不存在或不可执行。")
-
-    if not config["openclaw_model"]:
-        errors.append("OPENCLAW_MODEL 不能为空。")
-
-    if not config["openclaw_config_path"]:
-        errors.append("OPENCLAW_CONFIG_PATH 不能为空。")
-    elif not path_readable(config["openclaw_config_path"]):
-        errors.append("OPENCLAW_CONFIG_PATH 指向的配置文件不存在或不可读。")
-    elif str(config["openclaw_model"]).startswith("router/"):
-        api_key_ok, api_key_detail = openclaw_provider_api_key_configured(config, "router")
-        if not api_key_ok:
-            errors.append(f"router provider 缺少可用 apiKey：{api_key_detail}")
-
-    if not config["openclaw_runtime_config_path"]:
-        errors.append("OPENCLAW_RUNTIME_CONFIG_PATH 不能为空。")
-
     if not config["codex_bin"]:
         errors.append("CODEX_BIN 不能为空。")
     elif not command_exists(config["codex_bin"]):
@@ -338,6 +295,18 @@ def collect_config_errors(config: dict[str, Any]) -> list[str]:
     runtime_auth = runtime_home / "auth.json"
     if not source_auth.exists() and not runtime_auth.exists():
         errors.append("CODEX_SOURCE_HOME 或 CODEX_RUNTIME_HOME 下至少要有一份可用的 auth.json。")
+
+    if not config["feishu_app_id"]:
+        errors.append("FEISHU_APP_ID 不能为空。")
+    if not config["feishu_app_secret"]:
+        errors.append("FEISHU_APP_SECRET 不能为空。")
+    feishu_chat_ids = [
+        str(item).strip()
+        for item in [config.get("feishu_handoff_chat_id"), *(config.get("feishu_handoff_chat_ids") or [])]
+        if str(item or "").strip()
+    ]
+    if not feishu_chat_ids:
+        errors.append("FEISHU_HANDOFF_CHAT_ID 或 FEISHU_HANDOFF_CHAT_IDS 至少要配置一个群聊。")
 
     return errors
 
@@ -371,41 +340,6 @@ def run_doctor(config: dict[str, Any], env_file: Path) -> int:
 
     check("执行后端", backend in SUPPORTED_EXECUTION_BACKENDS, backend)
 
-    openclaw_exists = command_exists(config["openclaw_bin"])
-    check("OpenClaw 可执行文件", openclaw_exists, config["openclaw_bin"])
-    if openclaw_exists:
-        try:
-            openclaw_probe = run_command(
-                [config["openclaw_bin"], "--version"],
-                cwd=Path(config["app_home"]),
-                timeout=30,
-            )
-            probe_output = tail_text(
-                "\n".join(part for part in [openclaw_probe.stdout, openclaw_probe.stderr] if part),
-                500,
-            ) or config["openclaw_bin"]
-            check("OpenClaw CLI 可运行", openclaw_probe.returncode == 0, probe_output)
-        except Exception as exc:
-            check("OpenClaw CLI 可运行", False, str(exc))
-    else:
-        check("OpenClaw CLI 可运行", False, "skipped: executable missing")
-
-    check("OpenClaw 静态配置", path_readable(config["openclaw_config_path"]), config["openclaw_config_path"])
-    if openclaw_exists and path_readable(config["openclaw_config_path"]):
-        try:
-            runtime_path, _ = ensure_openclaw_runtime_config(config)
-            check("OpenClaw 运行时配置", True, str(runtime_path))
-            from src.clients.openclaw_client import list_openclaw_agents
-
-            agents = list_openclaw_agents(config)
-            check("OpenClaw Agent Registry", True, f"{len(agents)} agents")
-        except Exception as exc:
-            check("OpenClaw 运行时配置", False, str(exc))
-            check("OpenClaw Agent Registry", False, str(exc))
-    else:
-        check("OpenClaw 运行时配置", False, "skipped: static config or executable missing")
-        check("OpenClaw Agent Registry", False, "skipped: config or executable missing")
-
     codex_exists = command_exists(config["codex_bin"])
     check("Codex 可执行文件", codex_exists, config["codex_bin"])
     if codex_exists:
@@ -424,6 +358,38 @@ def run_doctor(config: dict[str, Any], env_file: Path) -> int:
             check("Codex CLI 可运行", False, str(exc))
     else:
         check("Codex CLI 可运行", False, "skipped: executable missing")
+
+    claude_exists = command_exists(config.get("claude_bin", "claude"))
+    check("Claude 可执行文件", claude_exists, config.get("claude_bin", "claude"))
+    if claude_exists:
+        try:
+            claude_probe = run_command(
+                [config["claude_bin"], "--version"],
+                cwd=Path(config["app_home"]),
+                timeout=30,
+            )
+            probe_output = tail_text(
+                "\n".join(part for part in [claude_probe.stdout, claude_probe.stderr] if part),
+                500,
+            ) or config["claude_bin"]
+            check("Claude CLI 可运行", claude_probe.returncode == 0, probe_output)
+        except Exception as exc:
+            check("Claude CLI 可运行", False, str(exc))
+    else:
+        check("Claude CLI 可运行", False, "skipped: executable missing")
+
+    check("Feishu App ID", bool(config["feishu_app_id"]), config["feishu_app_id"] or "(empty)")
+    check(
+        "Feishu Handoff Chats",
+        bool(config["feishu_handoff_chat_id"] or config["feishu_handoff_chat_ids"]),
+        ", ".join(
+            [
+                str(item).strip()
+                for item in [config.get("feishu_handoff_chat_id"), *(config.get("feishu_handoff_chat_ids") or [])]
+                if str(item or "").strip()
+            ]
+        ) or "(empty)",
+    )
 
     check("GitHub CLI", command_exists("gh"), "gh")
     gunicorn_candidates = [
@@ -450,10 +416,8 @@ def run_doctor(config: dict[str, Any], env_file: Path) -> int:
             "STATE_FILE",
             "LOG_DIR",
         ]
-        ensure_writable_path(Path(config["openclaw_runtime_config_path"]), is_file=True)
-        ensure_writable_path(Path(config["openclaw_state_dir"]), is_file=False)
         ensure_writable_path(Path(config["codex_runtime_home"]), is_file=False)
-        detail_parts.extend(["OPENCLAW_RUNTIME_CONFIG_PATH", "OPENCLAW_STATE_DIR", "CODEX_RUNTIME_HOME"])
+        detail_parts.append("CODEX_RUNTIME_HOME")
         detail = " / ".join(detail_parts) + " 可写"
         check("目录写权限", True, detail)
     except Exception as exc:

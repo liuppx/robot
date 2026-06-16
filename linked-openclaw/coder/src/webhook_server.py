@@ -5,8 +5,6 @@ from typing import Any, Callable
 
 from flask import Flask, jsonify, request
 
-from src import worker as worker_module
-from src.clients.openclaw_client import openclaw_issue_workspace_dir
 from src.issue_service import IssueService
 from src.utils.helpers import backend_label, backend_model_label, now_utc
 
@@ -47,8 +45,6 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
                 "time": now_utc(),
                 "app_home": context.config.get("app_home"),
                 "data_dir": context.config.get("data_dir"),
-                "openclaw_config_path": context.config.get("openclaw_config_path"),
-                "openclaw_runtime_config_path": context.config.get("openclaw_runtime_config_path"),
                 "allowed_repos": context.config.get("allowed_repos"),
                 "execution_backend": context.config.get("execution_backend"),
                 "backend_label": backend_label(context.config),
@@ -107,13 +103,6 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "issue_number must be an integer"}), 400
 
-        if context.config.get("execution_backend") == "openclaw":
-            worker_module.ensure_openclaw_issue_agent(
-                context.config,
-                repo_full_name,
-                issue_number,
-                openclaw_issue_workspace_dir(context.config, repo_full_name, issue_number),
-            )
         context.issue_service.upsert_issue_session(
             repo_full_name,
             issue_number,
@@ -160,15 +149,6 @@ def create_app(context_provider: Callable[[], WebhookContext]) -> Flask:
             return jsonify({"ok": False, "error": "binding not found"}), 404
         repo_full_name = str(binding["repo_full_name"])
         issue_number = int(binding["issue_number"])
-        if context.config.get("execution_backend") == "openclaw":
-            try:
-                context.issue_service.remove_openclaw_feishu_route_bindings(
-                    repo_full_name,
-                    issue_number,
-                    bindings=[binding],
-                )
-            except Exception as exc:
-                return jsonify({"ok": False, "error": f"failed to remove OpenClaw binding: {exc}"}), 500
         deleted = context.issue_service.delete_feishu_binding(chat_id, thread_id)
         remaining = context.issue_service.list_issue_bindings(repo_full_name, issue_number)
         session_row = context.issue_service.get_issue_session(repo_full_name, issue_number)

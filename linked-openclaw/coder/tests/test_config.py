@@ -1,4 +1,5 @@
 import os
+import runpy
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,22 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config["feishu_handoff_chat_id"], "oc_group_a")
         self.assertEqual(config["feishu_handoff_chat_ids"], ["oc_group_a", "oc_group_b"])
+
+    def test_gunicorn_relative_log_dir_resolves_under_project_root(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent
+        gunicorn_config = project_root / "config" / "gunicorn.conf.py"
+
+        with patch.dict(os.environ, {"LOG_DIR": "data/logs"}, clear=True):
+            payload = runpy.run_path(str(gunicorn_config))
+
+        self.assertEqual(
+            Path(payload["errorlog"]),
+            project_root / "data" / "logs" / "gunicorn.error.log",
+        )
+        self.assertEqual(
+            Path(payload["accesslog"]),
+            project_root / "data" / "logs" / "gunicorn.access.log",
+        )
 
 
 if __name__ == "__main__":

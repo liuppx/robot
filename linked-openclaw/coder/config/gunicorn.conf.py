@@ -10,6 +10,8 @@ timeout = 120
 graceful_timeout = 30
 keepalive = 5
 log_dir = Path(os.getenv("LOG_DIR") or PROJECT_ROOT.joinpath("data", "logs"))
+if not log_dir.is_absolute():
+    log_dir = PROJECT_ROOT / log_dir
 log_dir.mkdir(parents=True, exist_ok=True)
 accesslog = str(log_dir / "gunicorn.access.log")
 errorlog = str(log_dir / "gunicorn.error.log")

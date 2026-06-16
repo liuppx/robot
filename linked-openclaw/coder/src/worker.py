@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import requests
+
 from src.clients.github_client import (
     comment_issue,
     create_fork,
@@ -22,32 +24,23 @@ from src.clients.github_client import (
     get_repo_info_optional,
     list_pull_requests,
 )
-from src.clients.codex_client import build_codex_env, parse_codex_jsonl_events, parse_codex_jsonl_usage
-from src.clients.openclaw_client import (
-    build_openclaw_env,
-    list_openclaw_agents,
-    openclaw_issue_workspace_dir,
+from src.clients.codex_client import (
+    build_codex_env,
+    parse_codex_jsonl_error_messages,
+    parse_codex_jsonl_events,
+    parse_codex_jsonl_usage,
 )
 from src.utils.helpers import (
     ensure_dir,
     now_utc,
     run_command,
     service_actor_name,
+    short_text,
     slugify,
     tail_text,
 )
 
 
-OPENCLAW_RUNTIME_ARTIFACT_ROOTS = {
-    ".openclaw",
-    "AGENTS.md",
-    "BOOTSTRAP.md",
-    "HEARTBEAT.md",
-    "IDENTITY.md",
-    "SOUL.md",
-    "TOOLS.md",
-    "USER.md",
-}
 DEFAULT_GIT_AUTHOR_EMAIL = "coder-bot@local"
 JOB_TOKEN_USAGE_FILENAME = "token_usage.json"
 TOKEN_USAGE_KEYS = (
@@ -69,11 +62,12 @@ class WorkerContext:
     ensure_issue_session: Callable[[str, int, str], sqlite3.Row]
     upsert_issue_session: Callable[..., sqlite3.Row]
     cleanup_closed_issue_if_finished: Callable[[str, int], None]
+    reply_issue_progress_to_feishu: Callable[..., None]
     reply_issue_execution_result_to_feishu: Callable[..., None]
 
 
 def build_issue_agent_id(config: dict[str, Any], repo_full_name: str, issue_number: int) -> str:
-    prefix = slugify(config.get("openclaw_session_prefix", "gh"), limit=12)
+    prefix = slugify(config.get("issue_session_prefix", "gh"), limit=12)
     repo_slug = slugify(repo_full_name.replace("/", "-"), limit=48)
     if prefix:
         return f"{prefix}-{repo_slug}-issue-{issue_number}"
@@ -130,6 +124,36 @@ def read_job_token_usage(job_dir: Path) -> dict[str, int] | None:
     return normalize_token_usage(payload)
 
 
+def job_metadata_path(job_dir: Path) -> Path:
+    return Path(job_dir) / "job.json"
+
+
+def read_job_metadata(job_dir: Path) -> dict[str, Any] | None:
+    path = job_metadata_path(job_dir)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def update_job_execution_metadata(job_dir: Path, **updates: Any) -> None:
+    payload = read_job_metadata(job_dir)
+    if payload is None:
+        return
+    execution = payload.get("execution")
+    if not isinstance(execution, dict):
+        execution = {}
+    execution.update({key: value for key, value in updates.items()})
+    payload["execution"] = execution
+    job_metadata_path(job_dir).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def repo_workspace_root(config: dict[str, Any], repo_full_name: str) -> Path:
     safe_name = repo_full_name.replace("/", "__")
     return ensure_dir(Path(config["repo_root"]) / safe_name)
@@ -143,10 +167,6 @@ def repo_checkout_dir(config: dict[str, Any], repo_full_name: str, issue_number:
     return repo_issue_root(config, repo_full_name, issue_number) / "repo"
 
 
-def openclaw_agent_registry_lock_path(config: dict[str, Any]) -> Path:
-    return ensure_dir(Path(config["data_dir"]) / "openclaw") / "agents.lock"
-
-
 def acquire_file_lock(target: Path) -> bool:
     try:
         fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -155,21 +175,6 @@ def acquire_file_lock(target: Path) -> bool:
         return True
     except FileExistsError:
         return False
-
-
-def wait_for_file_lock(target: Path, timeout_seconds: int) -> bool:
-    deadline = time.time() + max(10, timeout_seconds)
-    while True:
-        if acquire_file_lock(target):
-            return True
-        if time.time() >= deadline:
-            return False
-        time.sleep(1)
-
-
-def release_file_lock(target: Path) -> None:
-    if target.exists():
-        target.unlink()
 
 
 def active_lock_path(config: dict[str, Any], repo_full_name: str, issue_number: int) -> Path:
@@ -212,7 +217,8 @@ def release_repo_lock(config: dict[str, Any], repo_full_name: str) -> None:
 def build_git_ssh_env(config: dict[str, Any], base_env: dict[str, str] | None = None) -> dict[str, str]:
     env = (base_env or os.environ).copy()
     env["GIT_SSH_COMMAND"] = (
-        f"ssh -i {config['github_clone_ssh_key_path']} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
+        f"ssh -F /dev/null -i {config['github_clone_ssh_key_path']} "
+        "-o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no"
     )
     return env
 
@@ -327,6 +333,24 @@ def git_ref_exists(repo_dir: Path, ref_name: str) -> bool:
     return result.returncode == 0
 
 
+def repo_checkout_is_usable(repo_dir: Path) -> bool:
+    if not (repo_dir / ".git").exists():
+        return False
+    worktree_result = run_command(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=repo_dir,
+        timeout=30,
+    )
+    if worktree_result.returncode != 0 or (worktree_result.stdout or "").strip() != "true":
+        return False
+    refs_result = run_command(
+        ["git", "show-ref", "--head", "--quiet"],
+        cwd=repo_dir,
+        timeout=30,
+    )
+    return refs_result.returncode == 0
+
+
 def git_current_branch(repo_dir: Path) -> str:
     result = run_command(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -356,38 +380,12 @@ def git_status_entries(repo_dir: Path) -> list[tuple[str, str]]:
     return entries
 
 
-def openclaw_runtime_artifact_path(relative_path: str) -> bool:
-    normalized = relative_path.replace("\\", "/").strip()
-    if not normalized:
-        return False
-    parts = [part for part in normalized.split("/") if part]
-    if not parts:
-        return False
-    root = parts[0]
-    if root == ".openclaw":
-        return True
-    return len(parts) == 1 and root in OPENCLAW_RUNTIME_ARTIFACT_ROOTS
-
-
 def remove_repo_path(target: Path) -> None:
     if target.is_dir() and not target.is_symlink():
         shutil.rmtree(target)
         return
     if target.exists() or target.is_symlink():
         target.unlink()
-
-
-def cleanup_openclaw_runtime_artifacts(repo_dir: Path) -> list[str]:
-    removed: list[str] = []
-    for status, relative_path in git_status_entries(repo_dir):
-        if status != "??" or not openclaw_runtime_artifact_path(relative_path):
-            continue
-        target = repo_dir / relative_path
-        if not target.exists() and not target.is_symlink():
-            continue
-        remove_repo_path(target)
-        removed.append(relative_path)
-    return removed
 
 
 def build_issue_commit_message(issue_number: int, issue_title: str) -> str:
@@ -403,13 +401,6 @@ def commit_repo_changes(
     issue_number: int,
     issue_title: str,
 ) -> str:
-    removed_artifacts = cleanup_openclaw_runtime_artifacts(repo_dir)
-    if removed_artifacts:
-        print(
-            "removed OpenClaw runtime artifacts before commit: "
-            + ", ".join(sorted(removed_artifacts))
-        )
-
     add_result = run_command(
         ["git", "add", "-A", "--", "."],
         cwd=repo_dir,
@@ -469,6 +460,9 @@ def ensure_repo_checkout(
     upstream_url = f"git@github.com:{upstream_owner}/{repo}.git"
 
     ensure_fork_exists(config, upstream_owner, repo)
+
+    if (repo_dir / ".git").exists() and not repo_checkout_is_usable(repo_dir):
+        remove_repo_path(repo_dir)
 
     if not (repo_dir / ".git").exists():
         clone_result = run_command(
@@ -558,17 +552,127 @@ def publish_pull_request_via_git_push_and_api(
     )
     if existing:
         return {"html_url": existing[0]["html_url"], "method": "git+api", "commit_sha": commit_sha}
-    pr = create_pull_request(
-        config,
-        token,
-        upstream_owner,
-        repo,
-        title=pr_title,
-        body=pr_body,
-        head=head_ref,
-        base=base_branch,
-    )
+    try:
+        pr = create_pull_request(
+            config,
+            token,
+            upstream_owner,
+            repo,
+            title=pr_title,
+            body=pr_body,
+            head=head_ref,
+            base=base_branch,
+        )
+    except (requests.ConnectionError, requests.Timeout):
+        # GitHub may create the PR and then time out before the response body is read.
+        existing_after_timeout = list_pull_requests(
+            config,
+            token,
+            upstream_owner,
+            repo,
+            head=head_ref,
+            base=base_branch,
+        )
+        if existing_after_timeout:
+            return {
+                "html_url": existing_after_timeout[0]["html_url"],
+                "method": "git+api-after-timeout",
+                "commit_sha": commit_sha,
+            }
+        raise RuntimeError(
+            "github pr create timeout and no existing pull request found "
+            f"for head={head_ref} base={base_branch}"
+        )
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 422:
+            existing_after_conflict = list_pull_requests(
+                config,
+                token,
+                upstream_owner,
+                repo,
+                head=head_ref,
+                base=base_branch,
+            )
+            if existing_after_conflict:
+                return {
+                    "html_url": existing_after_conflict[0]["html_url"],
+                    "method": "git+api-after-conflict",
+                    "commit_sha": commit_sha,
+                }
+        raise
     return {"html_url": pr["html_url"], "method": "git+api", "commit_sha": commit_sha}
+
+
+def user_friendly_error_summary(error_text: str) -> str:
+    text = str(error_text or "").strip()
+    lower_text = text.lower()
+    if not text:
+        return "(no error text)"
+    if "github pr create timeout" in lower_text:
+        return short_text(
+            "执行已完成代码修改，但 GitHub 创建 PR 超时。请稍后重试 `/run`，"
+            "系统会复用已推送分支或已有 PR。",
+            700,
+        )
+    if (
+        "api.github.com" in text
+        and ("Read timed out" in text or "ConnectionError" in text or "ReadTimeout" in text)
+    ) or "requests.exceptions.readtimeout" in lower_text:
+        return short_text(
+            "GitHub API 请求超时。代码可能已经提交并推送，"
+            "但创建或查询 PR 时没有拿到 GitHub 响应；请稍后重试 `/run` 或检查是否已有同分支 PR。",
+            700,
+        )
+    if (
+        "git clone" in lower_text
+        or "git fetch" in lower_text
+        or "'git', 'clone'" in lower_text
+        or "'git', 'fetch'" in lower_text
+    ) and (
+        "timed out after" in lower_text
+        or "kex_exchange_identification" in lower_text
+        or "could not read from remote repository" in lower_text
+        or "banner exchange" in lower_text
+        or "connection closed by unknown port 65535" in lower_text
+    ):
+        return short_text(
+            "Git 拉取仓库失败。当前更像是 coder 机器到 GitHub 的 SSH/代理链路异常，不是代码修改本身的问题；"
+            "请检查 GitHub SSH 直连或代理配置后重试。",
+            700,
+        )
+    if "git push failed" in text:
+        detail = tail_text(text.split("git push failed", 1)[-1].strip(), 360)
+        return short_text(f"git push 失败，分支没有成功推送到 GitHub。请检查 deploy key、分支权限或网络后重试。\n{detail}", 700)
+    if "no commit-worthy changes" in text or "no_change" in lower_text:
+        return "没有检测到可提交的代码改动。可能是改动已经存在、模型没有修改文件，或上一次执行已经完成。"
+    gateway_markers = (
+        "503 service unavailable",
+        "unexpected status 503",
+        "api_error_status\": 503",
+        "api_error_status 503",
+        "无可用渠道",
+        "当前分组",
+    )
+    if "router.yeying.pub" in text and any(marker in lower_text for marker in gateway_markers):
+        return "模型网关暂时不可用或上游额度不足，Codex/Claude 调用没有完成；请稍后重试。"
+    if any(marker in lower_text for marker in gateway_markers):
+        return "模型网关暂时不可用或上游额度不足，模型调用没有完成；请稍后重试。"
+    if "failed to authenticate" in lower_text or "authentication_failed" in lower_text or "401" in text:
+        return "模型服务认证失败，可能是 Claude/Codex token 过期或当前模型无权限。请检查机器上的模型 CLI 配置后重试。"
+    if "codex execution failed" in text:
+        return short_text(tail_text(text.split("codex execution failed", 1)[-1].strip(), 500), 700)
+    if "claude execution failed" in text:
+        return short_text(tail_text(text.split("claude execution failed", 1)[-1].strip(), 500), 700)
+    if "missing structured result" in lower_text:
+        return "模型已返回内容，但没有按约定输出结构化执行结果；请在同一线程重试 `/run`。"
+    if "bad credentials" in lower_text or "resource not accessible" in lower_text:
+        return "GitHub 权限不足或凭证无效，无法完成 issue 评论、push 或 PR 操作。请检查 GitHub App/安装权限。"
+    if "github_private_key_path" in text or "no such file or directory" in lower_text:
+        return "运行配置或凭证文件缺失。请检查 coder 的 GitHub App 私钥、push key 和环境变量配置。"
+    if "Traceback" in text:
+        tail_lines = [line.strip() for line in text.splitlines() if line.strip()][-8:]
+        return short_text(tail_text("\n".join(tail_lines), 500), 700)
+    return short_text(tail_text(text, 500), 700)
 
 
 def build_prompt(
@@ -592,7 +696,7 @@ def build_prompt(
         [
             "",
             "执行阶段说明：",
-            "- 飞书线程里已经收到明确的 `/run` 执行确认，现在就是正式执行阶段。",
+            "- 飞书线程里已经收到明确的执行确认（例如 `/run` 或 `执行方案1`），现在就是正式执行阶段。",
             "- 不要再等待新的确认消息，不要因为“缺少 `/run`”返回 `needs_human`。",
             "- 如果历史上下文里还保留着讨论阶段的约束，以当前这条执行指令为准。",
             "",
@@ -699,182 +803,10 @@ def parse_executor_result(text: str) -> dict[str, str]:
     return {"status": match.group(1), "text": raw}
 
 
-def summarize_openclaw_turn_failure(response_text: str, stderr_text: str) -> str | None:
-    response = (response_text or "").strip()
-    stderr = (stderr_text or "").strip()
-    response_lower = response.lower()
-    stderr_lower = stderr.lower()
-
-    if (
-        "agent couldn't generate a response" not in response_lower
-        and "incomplete turn detected" not in stderr_lower
-    ):
-        return None
-
-    interesting_lines: list[str] = []
-    for line in stderr.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        lowered = stripped.lower()
-        if (
-            "exec failed" in lowered
-            or "incomplete turn detected" in lowered
-            or "gateway connect failed" in lowered
-            or "denied" in lowered
-        ):
-            interesting_lines.append(stripped)
-
-    if not interesting_lines and stderr:
-        interesting_lines.append(tail_text(stderr, 1500))
-
-    parts = ["openclaw turn failed before producing a structured final response"]
-    if response:
-        parts.extend(["assistant reply:", tail_text(response, 600)])
-    if interesting_lines:
-        parts.extend(["stderr:", tail_text("\n".join(interesting_lines), 1800)])
-    return "\n".join(parts).strip()
-
-
-def parse_json_document(text: str) -> dict[str, Any]:
-    raw = (text or "").strip()
-    if not raw:
-        raise RuntimeError("empty json payload")
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start < 0 or end <= start:
-            raise RuntimeError("json payload not found in executor output") from None
-        payload = json.loads(raw[start : end + 1])
-    if not isinstance(payload, dict):
-        raise RuntimeError("executor json payload is not an object")
-    return payload
-
-
 def repo_has_commit_worthy_changes(repo_dir: Path) -> bool:
-    for status, relative_path in git_status_entries(repo_dir):
-        if status == "??" and openclaw_runtime_artifact_path(relative_path):
-            continue
+    for _status, _relative_path in git_status_entries(repo_dir):
         return True
     return False
-
-
-def ensure_openclaw_issue_agent(
-    config: dict[str, Any],
-    repo_full_name: str,
-    issue_number: int,
-    work_dir: Path,
-) -> str:
-    agent_id = build_issue_agent_id(config, repo_full_name, issue_number)
-    agent_dir = Path(config["openclaw_state_dir"]) / "agents" / agent_id / "agent"
-    lock_path = openclaw_agent_registry_lock_path(config)
-    if not wait_for_file_lock(lock_path, 180):
-        raise RuntimeError("timed out waiting for OpenClaw agent registry lock")
-
-    try:
-        agents = list_openclaw_agents(config)
-        existing = next((item for item in agents if str(item.get("id") or "") == agent_id), None)
-        expected_workspace = str(work_dir.resolve(strict=False))
-        expected_model = config["openclaw_model"]
-        if existing:
-            current_workspace = str(existing.get("workspace") or "")
-            current_model = str(existing.get("model") or "")
-            if current_workspace == expected_workspace and current_model == expected_model:
-                return agent_id
-            delete_result = run_command(
-                [config["openclaw_bin"], "agents", "delete", "--force", agent_id],
-                cwd=Path(config["app_home"]),
-                env=build_openclaw_env(config),
-                timeout=120,
-            )
-            if delete_result.returncode != 0:
-                raise RuntimeError(
-                    "openclaw agents delete failed\n"
-                    f"{tail_text(delete_result.stderr or delete_result.stdout, 3000)}"
-                )
-
-        add_result = run_command(
-            [
-                config["openclaw_bin"],
-                "agents",
-                "add",
-                "--json",
-                "--non-interactive",
-                "--workspace",
-                expected_workspace,
-                "--agent-dir",
-                str(agent_dir),
-                "--model",
-                expected_model,
-                agent_id,
-            ],
-            cwd=Path(config["app_home"]),
-            env=build_openclaw_env(config),
-            timeout=120,
-        )
-        if add_result.returncode != 0:
-            raise RuntimeError(
-                "openclaw agents add failed\n"
-                f"{tail_text(add_result.stderr or add_result.stdout, 3000)}"
-            )
-        return agent_id
-    finally:
-        release_file_lock(lock_path)
-
-
-def delete_openclaw_issue_agent(config: dict[str, Any], repo_full_name: str, issue_number: int) -> None:
-    agent_id = build_issue_agent_id(config, repo_full_name, issue_number)
-    lock_path = openclaw_agent_registry_lock_path(config)
-    if not wait_for_file_lock(lock_path, 60):
-        print(f"warning: timed out waiting for OpenClaw agent registry lock while deleting {agent_id}")
-        return
-    try:
-        delete_result = run_command(
-            [config["openclaw_bin"], "agents", "delete", "--force", agent_id],
-            cwd=Path(config["app_home"]),
-            env=build_openclaw_env(config),
-            timeout=120,
-        )
-        delete_output = "\n".join(part for part in [delete_result.stdout, delete_result.stderr] if part)
-        if delete_result.returncode != 0 and "not found" not in delete_output.lower():
-            print(
-                "warning: openclaw agents delete failed for "
-                f"{agent_id}: {tail_text(delete_output, 1000)}"
-            )
-    finally:
-        release_file_lock(lock_path)
-
-
-def extract_openclaw_result(payload: dict[str, Any]) -> tuple[str, str | None]:
-    meta = payload.get("meta") or {}
-    if not isinstance(meta, dict):
-        meta = {}
-    text = str(meta.get("finalAssistantVisibleText") or "").strip()
-    if not text:
-        parts: list[str] = []
-        raw_payloads = payload.get("payloads") or []
-        if isinstance(raw_payloads, list):
-            for item in raw_payloads:
-                if not isinstance(item, dict):
-                    continue
-                content = str(item.get("text") or "").strip()
-                if content:
-                    parts.append(content)
-        text = "\n\n".join(parts).strip()
-    if not text:
-        raise RuntimeError("openclaw returned no assistant text")
-
-    agent_meta = meta.get("agentMeta") or {}
-    if not isinstance(agent_meta, dict):
-        agent_meta = {}
-    session_id = str(agent_meta.get("sessionId") or "").strip() or None
-    if not session_id:
-        cli_binding = agent_meta.get("cliSessionBinding") or {}
-        if isinstance(cli_binding, dict):
-            session_id = str(cli_binding.get("sessionId") or "").strip() or None
-    return text, session_id
 
 
 def run_codex_chat_turn(
@@ -889,6 +821,7 @@ def run_codex_chat_turn(
     env = build_codex_env(config)
     temp_root = ensure_dir(Path(config["data_dir"]) / "codex" / "tmp")
     output_path = (log_dir or temp_root) / f"codex-last-message-{int(time.time() * 1000)}-{os.getpid()}.txt"
+    requested_model = str(selected_model or "").strip() or None
     command = [
         config["codex_bin"],
         "exec",
@@ -924,9 +857,20 @@ def run_codex_chat_turn(
         (log_dir / "codex.stdout.jsonl").write_text(result.stdout or "", encoding="utf-8")
         (log_dir / "codex.stderr.log").write_text(result.stderr or "", encoding="utf-8")
     if result.returncode != 0:
+        error_messages = parse_codex_jsonl_error_messages(result.stdout or "")
+        stderr_summary = tail_text(result.stderr or "", 2000)
+        details: list[str] = []
+        if error_messages:
+            details.extend(error_messages[-3:])
+        if stderr_summary and stderr_summary != "Reading additional input from stdin...":
+            details.append(stderr_summary)
+        if not details:
+            fallback = tail_text(result.stdout or result.stderr, 4000)
+            if fallback:
+                details.append(fallback)
         raise RuntimeError(
             "codex execution failed\n"
-            f"{tail_text(result.stderr or result.stdout, 4000)}"
+            + "\n".join(details)
         )
 
     thread_id, streamed_text = parse_codex_jsonl_events(result.stdout or "")
@@ -940,7 +884,10 @@ def run_codex_chat_turn(
         raise RuntimeError("codex returned empty assistant reply")
     return {
         "agent_id": "codex",
+        "backend": "codex",
         "agent_session_id": thread_id or resume_session_id,
+        "requested_model": requested_model,
+        "actual_model": effective_model or None,
         "text": response_text,
         "stdout": result.stdout or "",
         "stderr": result.stderr or "",
@@ -948,106 +895,199 @@ def run_codex_chat_turn(
     }
 
 
-def run_openclaw_chat_turn(
-    config: dict[str, Any],
-    repo_full_name: str,
-    issue_number: int,
-    prompt: str,
-    session_key: str,
-    *,
-    log_dir: Path | None = None,
-) -> dict[str, Any]:
-    agent_work_dir = openclaw_issue_workspace_dir(config, repo_full_name, issue_number)
-    agent_id = ensure_openclaw_issue_agent(config, repo_full_name, issue_number, agent_work_dir)
-    env = build_openclaw_env(config)
+def claude_missing_resume_session(result: subprocess.CompletedProcess[str]) -> bool:
+    text = f"{result.stdout or ''}\n{result.stderr or ''}"
+    return "No conversation found with session ID" in text
 
-    command = [
-        config["openclaw_bin"],
-        "agent",
-        "--local",
-        "--json",
-        "--agent",
-        agent_id,
-        "--session-id",
-        session_key,
-        "--model",
-        config["openclaw_model"],
-        "--timeout",
-        str(config["openclaw_timeout"]),
-        "--message",
-        prompt,
-    ]
+
+def parse_claude_usage(payload: dict[str, Any]) -> dict[str, int] | None:
+    usage = empty_token_usage()
+    model_usage = payload.get("modelUsage")
+    if isinstance(model_usage, dict):
+        for item in model_usage.values():
+            if not isinstance(item, dict):
+                continue
+            usage["input_tokens"] += int(item.get("inputTokens") or 0)
+            usage["cached_input_tokens"] += int(item.get("cacheReadInputTokens") or 0)
+            usage["cached_input_tokens"] += int(item.get("cacheCreationInputTokens") or 0)
+            usage["output_tokens"] += int(item.get("outputTokens") or 0)
+
+    raw_usage = payload.get("usage")
+    if not any(usage.values()) and isinstance(raw_usage, dict):
+        input_tokens = int(raw_usage.get("input_tokens") or 0)
+        cache_read_tokens = int(raw_usage.get("cache_read_input_tokens") or 0)
+        cache_create_tokens = int(raw_usage.get("cache_creation_input_tokens") or 0)
+        output_tokens = int(raw_usage.get("output_tokens") or 0)
+        usage["input_tokens"] += input_tokens
+        usage["cached_input_tokens"] += cache_read_tokens + cache_create_tokens
+        usage["output_tokens"] += output_tokens
+
+    if not any(usage.values()):
+        return None
+    usage["total_tokens"] = (
+        usage["input_tokens"]
+        + usage["cached_input_tokens"]
+        + usage["output_tokens"]
+        + usage["reasoning_output_tokens"]
+    )
+    return usage
+
+
+def parse_claude_result_payload(stdout: str) -> dict[str, Any] | None:
+    raw = stdout.strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def parse_claude_result_json(stdout: str) -> tuple[str, str | None, dict[str, int] | None]:
+    raw = stdout.strip()
+    payload = parse_claude_result_payload(raw)
+    if payload is None:
+        return raw, None, None
+    response_text = str(payload.get("result") or "").strip()
+    session_id = str(payload.get("session_id") or payload.get("sessionId") or "").strip() or None
+    return response_text, session_id, parse_claude_usage(payload)
+
+
+def claude_json_error_summary(stdout: str) -> str | None:
+    payload = parse_claude_result_payload(stdout)
+    if not payload or not payload.get("is_error"):
+        return None
+    result = str(payload.get("result") or "").strip()
+    api_status = payload.get("api_error_status")
+    if api_status:
+        prefix = f"Claude API error {api_status}"
+        return f"{prefix}: {result}" if result else prefix
+    return result or "Claude returned an error result"
+
+
+def claude_should_retry_without_model(result: subprocess.CompletedProcess[str]) -> bool:
+    text = f"{result.stdout or ''}\n{result.stderr or ''}"
+    error_summary = claude_json_error_summary(result.stdout or "")
+    if error_summary:
+        text = f"{error_summary}\n{text}"
+    auth_markers = (
+        "authentication_failed",
+        "Failed to authenticate",
+        "api_error_status\": 401",
+        "api_error_status 401",
+        "Claude API error 401",
+        "该令牌已过期",
+    )
+    if any(marker in text for marker in auth_markers):
+        return False
+    retry_markers = (
+        "api_error_status",
+        "无可用渠道",
+        "当前分组",
+        "model",
+        "503",
+    )
+    return any(marker in text for marker in retry_markers)
+
+
+def run_claude_chat_turn(
+    config: dict[str, Any],
+    work_dir: Path,
+    prompt: str,
+    *,
+    resume_session_id: str | None = None,
+    log_dir: Path | None = None,
+    selected_model: str | None = None,
+) -> dict[str, Any]:
+    env = os.environ.copy()
+    effective_model = str(selected_model or config.get("claude_model") or "").strip()
+    requested_model = str(selected_model or "").strip() or None
+    attempted_resume = bool(resume_session_id)
+
+    def build_command(resume_id: str | None, model: str | None) -> list[str]:
+        command = [
+            config["claude_bin"],
+            "--print",
+            "--output-format",
+            "json",
+            "-p",
+            prompt,
+        ]
+        if model:
+            command.extend(["--model", model])
+        if resume_id:
+            command.extend(["--resume", str(resume_id)])
+        return command
+
+    command = build_command(resume_session_id, effective_model or None)
     result = run_command(
         command,
-        cwd=agent_work_dir,
+        cwd=work_dir,
         env=env,
-        timeout=config["openclaw_timeout"] + 120,
+        timeout=int(config["claude_timeout"]) + 120,
     )
+    if result.returncode != 0 and attempted_resume and claude_missing_resume_session(result):
+        if log_dir is not None:
+            (log_dir / "claude.resume.stdout.log").write_text(result.stdout or "", encoding="utf-8")
+            (log_dir / "claude.resume.stderr.log").write_text(result.stderr or "", encoding="utf-8")
+        command = build_command(None, effective_model or None)
+        result = run_command(
+            command,
+            cwd=work_dir,
+            env=env,
+            timeout=int(config["claude_timeout"]) + 120,
+        )
+    if effective_model and (
+        result.returncode != 0 or claude_json_error_summary(result.stdout or "") is not None
+    ) and claude_should_retry_without_model(result):
+        print(
+            f"warning: claude selected model {effective_model} failed; retrying with Claude Code default model",
+            file=sys.stderr,
+        )
+        if log_dir is not None:
+            (log_dir / "claude.selected-model.stdout.log").write_text(result.stdout or "", encoding="utf-8")
+            (log_dir / "claude.selected-model.stderr.log").write_text(result.stderr or "", encoding="utf-8")
+        command = build_command(None, None)
+        result = run_command(
+            command,
+            cwd=work_dir,
+            env=env,
+            timeout=int(config["claude_timeout"]) + 120,
+        )
+        effective_model = str(config.get("claude_model") or "").strip()
     if log_dir is not None:
-        (log_dir / "openclaw.stdout.log").write_text(result.stdout or "", encoding="utf-8")
-        (log_dir / "openclaw.stderr.log").write_text(result.stderr or "", encoding="utf-8")
-    if result.returncode != 0:
+        (log_dir / "claude.stdout.log").write_text(result.stdout or "", encoding="utf-8")
+        (log_dir / "claude.stderr.log").write_text(result.stderr or "", encoding="utf-8")
+    error_summary = claude_json_error_summary(result.stdout or "")
+    if result.returncode != 0 or error_summary is not None:
+        stderr_summary = tail_text(result.stderr or "", 2000)
+        stdout_summary = tail_text(result.stdout or "", 2000)
+        details: list[str] = []
+        if error_summary:
+            details.append(error_summary)
+        if stdout_summary:
+            details.append(stdout_summary)
+        if stderr_summary:
+            details.append(stderr_summary)
         raise RuntimeError(
-            "openclaw execution failed\n"
-            f"{tail_text(result.stderr or result.stdout, 4000)}"
+            "claude execution failed\n"
+            + "\n".join(details)
         )
-
-    payload = parse_json_document(result.stdout or "")
-    if log_dir is not None:
-        (log_dir / "openclaw.response.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    response_text, agent_session_id = extract_openclaw_result(payload)
-    if not response_text.strip():
-        raise RuntimeError(f"openclaw returned empty discussion reply for agent {agent_id}")
+    response_text, claude_session_id, token_usage = parse_claude_result_json(result.stdout or "")
+    if not response_text:
+        raise RuntimeError("claude returned empty assistant reply")
     return {
-        "agent_id": agent_id,
-        "agent_session_id": agent_session_id or session_key,
+        "agent_id": "claude",
+        "backend": "claude",
+        "agent_session_id": claude_session_id or resume_session_id,
+        "requested_model": requested_model,
+        "actual_model": effective_model or None,
         "text": response_text,
         "stdout": result.stdout or "",
         "stderr": result.stderr or "",
-        "payload": payload,
+        "token_usage": token_usage,
     }
-
-
-def run_openclaw(
-    config: dict[str, Any],
-    repo_full_name: str,
-    issue_number: int,
-    work_dir: Path,
-    prompt: str,
-    job_dir: Path,
-    session_key: str,
-) -> dict[str, str]:
-    del work_dir
-    turn = run_openclaw_chat_turn(
-        config,
-        repo_full_name,
-        issue_number,
-        prompt,
-        session_key,
-        log_dir=job_dir,
-    )
-    response_text = str(turn["text"])
-    stderr_text = str(turn.get("stderr") or "")
-    failure_summary = summarize_openclaw_turn_failure(response_text, stderr_text)
-    if failure_summary:
-        raise RuntimeError(failure_summary)
-    try:
-        parsed = parse_executor_result(response_text)
-    except RuntimeError as exc:
-        parts = [
-            "openclaw final response missing structured result",
-            "assistant reply:",
-            tail_text(response_text, 1200),
-        ]
-        if stderr_text.strip():
-            parts.extend(["stderr:", tail_text(stderr_text, 1200)])
-        raise RuntimeError("\n".join(parts).strip()) from exc
-    parsed["agent_id"] = str(turn["agent_id"])
-    parsed["agent_session_id"] = str(turn["agent_session_id"] or session_key)
-    return parsed
 
 
 def run_discussion_turn(
@@ -1061,9 +1101,10 @@ def run_discussion_turn(
     agent_session_id: str | None = None,
     log_dir: Path | None = None,
     selected_model: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, Any]:
-    backend = str(config.get("execution_backend") or "openclaw").strip().lower()
-    if backend == "codex":
+    effective_backend = str(backend or config.get("execution_backend") or "codex").strip().lower()
+    if effective_backend == "codex":
         return run_codex_chat_turn(
             config,
             work_dir,
@@ -1072,14 +1113,16 @@ def run_discussion_turn(
             log_dir=log_dir,
             selected_model=selected_model,
         )
-    return run_openclaw_chat_turn(
-        config,
-        repo_full_name,
-        issue_number,
-        prompt,
-        session_key,
-        log_dir=log_dir,
-    )
+    if effective_backend == "claude":
+        return run_claude_chat_turn(
+            config,
+            work_dir,
+            prompt,
+            resume_session_id=agent_session_id,
+            log_dir=log_dir,
+            selected_model=selected_model,
+        )
+    raise RuntimeError(f"unsupported discussion backend: {effective_backend}")
 
 
 def run_executor(
@@ -1092,9 +1135,10 @@ def run_executor(
     session_key: str,
     agent_session_id: str | None = None,
     selected_model: str | None = None,
+    backend: str | None = None,
 ) -> dict[str, str]:
-    backend = str(config.get("execution_backend") or "openclaw").strip().lower()
-    if backend == "codex":
+    effective_backend = str(backend or config.get("execution_backend") or "codex").strip().lower()
+    if effective_backend == "codex":
         turn = run_codex_chat_turn(
             config,
             work_dir,
@@ -1118,9 +1162,68 @@ def run_executor(
             raise RuntimeError("\n".join(parts).strip()) from exc
         parsed["agent_id"] = str(turn["agent_id"])
         parsed["agent_session_id"] = str(turn["agent_session_id"] or agent_session_id or session_key)
+        parsed["actual_backend"] = str(turn.get("backend") or effective_backend)
+        parsed["requested_model"] = str(turn.get("requested_model") or selected_model or "").strip() or None
+        parsed["actual_model"] = str(turn.get("actual_model") or "").strip() or None
         parsed["token_usage"] = normalize_token_usage(turn.get("token_usage"))
         return parsed
-    return run_openclaw(config, repo_full_name, issue_number, work_dir, prompt, job_dir, session_key)
+    if effective_backend == "claude":
+        turn = run_claude_chat_turn(
+            config,
+            work_dir,
+            prompt,
+            resume_session_id=agent_session_id,
+            log_dir=job_dir,
+            selected_model=selected_model,
+        )
+        response_text = str(turn["text"])
+        stderr_text = str(turn.get("stderr") or "")
+        try:
+            parsed = parse_executor_result(response_text)
+        except RuntimeError as exc:
+            parts = [
+                "claude final response missing structured result",
+                "assistant reply:",
+                tail_text(response_text, 1200),
+            ]
+            if stderr_text.strip():
+                parts.extend(["stderr:", tail_text(stderr_text, 1200)])
+            raise RuntimeError("\n".join(parts).strip()) from exc
+        parsed["agent_id"] = str(turn["agent_id"])
+        parsed["agent_session_id"] = str(turn["agent_session_id"] or agent_session_id or session_key)
+        parsed["actual_backend"] = str(turn.get("backend") or effective_backend)
+        parsed["requested_model"] = str(turn.get("requested_model") or selected_model or "").strip() or None
+        parsed["actual_model"] = str(turn.get("actual_model") or "").strip() or None
+        parsed["token_usage"] = normalize_token_usage(turn.get("token_usage"))
+        return parsed
+    raise RuntimeError(f"unsupported execution backend: {effective_backend}")
+
+
+def post_job_progress(
+    context: WorkerContext,
+    repo_full_name: str,
+    issue_number: int,
+    job_id: str,
+    message: str,
+    *,
+    backend: str | None = None,
+    selected_model: str | None = None,
+    actual_backend: str | None = None,
+    actual_model: str | None = None,
+) -> None:
+    try:
+        context.reply_issue_progress_to_feishu(
+            repo_full_name,
+            issue_number,
+            job_id=job_id,
+            message=message,
+            backend=backend,
+            selected_model=selected_model,
+            actual_backend=actual_backend,
+            actual_model=actual_model,
+        )
+    except Exception as exc:
+        print(f"warning: failed to post job progress for {repo_full_name}#{issue_number}: {exc}")
 
 
 def process_job(context: WorkerContext, job_id: str) -> None:
@@ -1130,6 +1233,7 @@ def process_job(context: WorkerContext, job_id: str) -> None:
     context.mark_job_running(job_id, os.getpid())
 
     payload = json.loads(str(row["payload_json"]))
+    payload_execution = payload.get("_execution") if isinstance(payload, dict) and isinstance(payload.get("_execution"), dict) else None
     repo_full_name = str(row["repo_full_name"])
     issue_number = int(row["issue_number"])
     issue = payload["issue"]
@@ -1144,6 +1248,10 @@ def process_job(context: WorkerContext, job_id: str) -> None:
     token_usage = empty_token_usage()
     active_locked = False
     repo_locked = False
+    selected_model: str | None = None
+    session_backend: str | None = None
+    actual_model: str | None = None
+    actual_backend: str | None = None
 
     try:
         active_locked = acquire_active_lock(context.config, repo_full_name, issue_number)
@@ -1162,8 +1270,61 @@ def process_job(context: WorkerContext, job_id: str) -> None:
         session_key = str(session_row["session_key"])
         branch_name = str(session_row["branch_name"])
         existing_agent_session_id = str(session_row["agent_session_id"] or "").strip() or None
-        selected_model = str(session_row["selected_model"] or "").strip() or None
+        live_session_backend = str(session_row["backend"] or "").strip().lower() or None
+        selected_model = (
+            str((payload_execution or {}).get("selected_model") or "").strip()
+            or str(session_row["selected_model"] or "").strip()
+            or None
+        )
+        session_backend = (
+            str((payload_execution or {}).get("backend") or "").strip().lower()
+            or str(session_row["backend"] or "").strip().lower()
+            or "codex"
+        )
+        if live_session_backend and session_backend != live_session_backend:
+            existing_agent_session_id = None
+        actual_model = (
+            str((payload_execution or {}).get("model") or "").strip()
+            or selected_model
+            or (
+                str(
+                    context.config["claude_model"]
+                    if session_backend == "claude"
+                    else context.config["codex_model"]
+                ).strip()
+                or None
+            )
+        )
+        actual_backend = session_backend
+        update_job_execution_metadata(
+            job_dir,
+            backend=session_backend,
+            selected_model=selected_model,
+            model=actual_model,
+        )
+        post_job_progress(
+            context,
+            repo_full_name,
+            issue_number,
+            job_id,
+            "执行进程已启动，正在准备仓库。",
+            backend=session_backend,
+            selected_model=selected_model,
+            actual_backend=actual_backend,
+            actual_model=actual_model,
+        )
         _, work_dir = ensure_repo_checkout(context.config, repo_full_name, issue_number, default_branch, branch_name)
+        post_job_progress(
+            context,
+            repo_full_name,
+            issue_number,
+            job_id,
+            "已拉取并切换仓库，正在调用模型。",
+            backend=session_backend,
+            selected_model=selected_model,
+            actual_backend=actual_backend,
+            actual_model=actual_model,
+        )
 
         prompt = build_prompt(
             repo_full_name,
@@ -1182,6 +1343,25 @@ def process_job(context: WorkerContext, job_id: str) -> None:
             session_key,
             existing_agent_session_id,
             selected_model,
+            backend=session_backend,
+        )
+        actual_backend = str(executor_result.get("actual_backend") or session_backend or "").strip().lower() or session_backend
+        actual_model = str(executor_result.get("actual_model") or "").strip() or actual_model
+        update_job_execution_metadata(
+            job_dir,
+            actual_backend=actual_backend,
+            actual_model=actual_model,
+        )
+        post_job_progress(
+            context,
+            repo_full_name,
+            issue_number,
+            job_id,
+            "已完成模型执行，正在检查代码改动。",
+            backend=session_backend,
+            selected_model=selected_model,
+            actual_backend=actual_backend,
+            actual_model=actual_model,
         )
         final_status = str(executor_result["status"])
         result_summary = str(executor_result["text"])
@@ -1191,6 +1371,9 @@ def process_job(context: WorkerContext, job_id: str) -> None:
         context.upsert_issue_session(
             repo_full_name,
             issue_number,
+            backend=session_backend,
+            selected_model=selected_model,
+            clear_selected_model=selected_model is None and session_backend is not None,
             session_state="active",
             agent_session_id=agent_session_id,
             summary=result_summary,
@@ -1199,6 +1382,17 @@ def process_job(context: WorkerContext, job_id: str) -> None:
 
         if final_status == "succeeded":
             if not repo_has_commit_worthy_changes(work_dir):
+                post_job_progress(
+                    context,
+                    repo_full_name,
+                    issue_number,
+                    job_id,
+                    "模型结果没有产生可提交改动，正在追加一次修复执行。",
+                    backend=session_backend,
+                    selected_model=selected_model,
+                    actual_backend=actual_backend,
+                    actual_model=actual_model,
+                )
                 retry_prompt = build_missing_changes_retry_prompt(str(work_dir), result_summary)
                 retry_job_dir = ensure_dir(job_dir / "retry-no-diff")
                 retry_result = run_executor(
@@ -1211,14 +1405,25 @@ def process_job(context: WorkerContext, job_id: str) -> None:
                     session_key,
                     agent_session_id,
                     selected_model,
+                    backend=session_backend,
                 )
                 final_status = str(retry_result["status"])
                 result_summary = str(retry_result["text"])
                 agent_session_id = str(retry_result.get("agent_session_id") or "").strip() or agent_session_id
+                actual_backend = str(retry_result.get("actual_backend") or session_backend or "").strip().lower() or session_backend
+                actual_model = str(retry_result.get("actual_model") or "").strip() or actual_model
+                update_job_execution_metadata(
+                    job_dir,
+                    actual_backend=actual_backend,
+                    actual_model=actual_model,
+                )
                 merge_token_usage(token_usage, normalize_token_usage(retry_result.get("token_usage")))
                 context.upsert_issue_session(
                     repo_full_name,
                     issue_number,
+                    backend=session_backend,
+                    selected_model=selected_model,
+                    clear_selected_model=selected_model is None and session_backend is not None,
                     session_state="active",
                     agent_session_id=agent_session_id,
                     summary=result_summary,
@@ -1230,6 +1435,17 @@ def process_job(context: WorkerContext, job_id: str) -> None:
                     )
 
         if final_status == "succeeded":
+            post_job_progress(
+                context,
+                repo_full_name,
+                issue_number,
+                job_id,
+                "已检测到代码改动，正在提交分支并创建 PR。",
+                backend=session_backend,
+                selected_model=selected_model,
+                actual_backend=actual_backend,
+                actual_model=actual_model,
+            )
             pr_title = f"{context.config['pr_title_prefix']} {issue_title}".strip()
             publish_result = publish_pull_request_via_git_push_and_api(
                 context.config,
@@ -1244,9 +1460,23 @@ def process_job(context: WorkerContext, job_id: str) -> None:
                 result_summary,
             )
             pr_url = str(publish_result["html_url"])
+            post_job_progress(
+                context,
+                repo_full_name,
+                issue_number,
+                job_id,
+                f"PR 已创建：{pr_url}",
+                backend=session_backend,
+                selected_model=selected_model,
+                actual_backend=actual_backend,
+                actual_model=actual_model,
+            )
             context.upsert_issue_session(
                 repo_full_name,
                 issue_number,
+                backend=session_backend,
+                selected_model=selected_model,
+                clear_selected_model=selected_model is None and session_backend is not None,
                 session_state="done",
                 agent_session_id=agent_session_id,
                 pr_url=pr_url,
@@ -1261,11 +1491,22 @@ def process_job(context: WorkerContext, job_id: str) -> None:
             if context.config["submit_comment_after_pr"] and context.config["submit_comment_body"]:
                 comment_lines.extend(["", context.config["submit_comment_body"]])
             comment_issue(context.config, token, owner, repo, issue_number, "\n".join(comment_lines).strip())
+            try:
+                from src.clients.github_client import set_issue_status_label
+                set_issue_status_label(
+                    context.config, token, owner, repo, issue_number,
+                    "issue_label_pr_ready_name",
+                )
+            except Exception as exc:
+                print(f"warning: failed to set issue label for {repo_full_name}#{issue_number}: {exc}")
             result_summary = f"{result_summary}\n\nPR: {pr_url}"
         elif final_status == "no_change":
             context.upsert_issue_session(
                 repo_full_name,
                 issue_number,
+                backend=session_backend,
+                selected_model=selected_model,
+                clear_selected_model=selected_model is None and session_backend is not None,
                 session_state="done",
                 agent_session_id=agent_session_id,
                 summary=result_summary,
@@ -1275,19 +1516,26 @@ def process_job(context: WorkerContext, job_id: str) -> None:
             context.upsert_issue_session(
                 repo_full_name,
                 issue_number,
+                backend=session_backend,
+                selected_model=selected_model,
+                clear_selected_model=selected_model is None and session_backend is not None,
                 session_state="failed",
                 agent_session_id=agent_session_id,
                 summary=result_summary,
                 last_result_status=final_status,
             )
     except Exception:
-        error_text = tail_text(traceback.format_exc(), 4000)
+        raw_error_text = tail_text(traceback.format_exc(), 4000)
+        error_text = user_friendly_error_summary(raw_error_text)
         final_status = "failed"
         context.upsert_issue_session(
             repo_full_name,
             issue_number,
+            backend=session_backend,
+            selected_model=selected_model,
+            clear_selected_model=selected_model is None and session_backend is not None,
             session_state="failed",
-            summary=error_text,
+            summary=raw_error_text,
             last_result_status="failed",
         )
         raise
@@ -1296,6 +1544,20 @@ def process_job(context: WorkerContext, job_id: str) -> None:
         write_job_token_usage(job_dir, final_token_usage)
         if final_token_usage is not None:
             print(f"[worker] job {job_id} token usage: {json.dumps(final_token_usage, ensure_ascii=True, sort_keys=True)}")
+        if final_status == "failed":
+            try:
+                context.upsert_issue_session(
+                    repo_full_name,
+                    issue_number,
+                    backend=session_backend,
+                    selected_model=selected_model,
+                    clear_selected_model=selected_model is None and session_backend is not None,
+                    session_state="failed",
+                    summary=error_text or result_summary,
+                    last_result_status="failed",
+                )
+            except Exception as exc:
+                print(f"warning: failed to reconcile failed issue session for {repo_full_name}#{issue_number}: {exc}")
         context.mark_job_finished(
             job_id,
             final_status,
@@ -1317,6 +1579,10 @@ def process_job(context: WorkerContext, job_id: str) -> None:
             result_summary=result_summary,
             error_text=error_text,
             token_usage=final_token_usage,
+            backend=session_backend,
+            selected_model=selected_model,
+            actual_backend=actual_backend,
+            actual_model=actual_model,
         )
 
 
@@ -1349,8 +1615,6 @@ __all__ = [
     "build_issue_agent_id",
     "build_missing_changes_retry_prompt",
     "build_prompt",
-    "delete_openclaw_issue_agent",
-    "ensure_openclaw_issue_agent",
     "ensure_repo_checkout",
     "publish_pull_request_via_git_push_and_api",
     "release_active_lock",
@@ -1360,7 +1624,7 @@ __all__ = [
     "repo_issue_root",
     "repo_lock_path",
     "process_job",
+    "run_claude_chat_turn",
     "run_executor",
-    "run_openclaw_chat_turn",
     "spawn_worker",
 ]

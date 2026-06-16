@@ -1,7 +1,7 @@
 [project]
 name = "coder-bot"
 version = "0.1.0"
-description = "GitHub App issue automation bot backed by local OpenClaw sessions"
+description = "GitHub App issue automation bot for Feishu-driven coding workflows"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

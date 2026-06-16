@@ -6,16 +6,10 @@ data/
 *.db
 *.log
 secrets/
-.openclaw/
 .codex-home/
 .npm-cache/
 *.pyc
 *.egg-info/
 config/coder-bot.env
 config/openclaw.json
-config/openclaw.json.bak*
-config/openclaw.json.last-good
-config/openclaw.feishu.json
-config/openclaw.feishu.json.bak*
-config/openclaw.feishu.json.last-good
 feishu-state/

@@ -1,65 +1,50 @@
 # Coder Bot
 
-GitHub issue orchestration service backed by OpenClaw and Feishu.
+Feishu `issue` 协作机器人，负责把 GitHub issue 拉进飞书线程讨论，并按所选模型调用 `Codex` 或 `Claude` 执行修改、推分支、发 PR。
 
-- 源代码：`src/`
-- 核心模块：`src/main.py`、`src/issue_service.py`、`src/webhook_server.py`、`src/worker.py`、`src/scheduler.py`
-- 配置文件：`config/`
-- 运维脚本：`scripts/`
-- 运行数据：`data/`
-- 文档：`docs/`
+## 当前架构
 
-## 启动方式
+- 飞书接入直接使用 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`
+- 模型优先：用户只选模型，不再选执行器
+- 后端内部自动推断：
+  - `gpt-*` -> `codex`
+  - `claude-*` -> `claude`
+- 服务进程只有一个：`coder-bot`
 
-开始部署前，先确认两件事：
-
-- Python 运行时使用 `3.11`
-- OpenClaw 至少安装到和本仓库当前验证版本一致；本次联调验证版本是 `2026.5.6`
-
-推荐初始化顺序：
+## 快速开始
 
 ```bash
-uv python install 3.11
 uv sync --frozen
-openclaw plugins install @openclaw/feishu
-openclaw plugins registry --refresh
-uv run --frozen coder-bot --env-file config/coder-bot.env prepare-openclaw-runtime
+cp config/coder-bot.env.template config/coder-bot.env
 uv run --frozen coder-bot --env-file config/coder-bot.env doctor
+./scripts/start_bot.sh
 ```
 
-手动启动：
+如果要安装 systemd 服务：
 
 ```bash
-./scripts/start_gateway.sh
-CODER_BOT_ENV_FILE=config/coder-bot.env uv run --frozen gunicorn -c config/gunicorn.conf.py src.main:APP
-```
-
-或者直接用 Python 包入口：
-
-```bash
-python -m src --env-file config/coder-bot.env serve
-```
-
-systemd 部署：
-
-```bash
-BOT_USER="$(id -un)" UV_BIN="$HOME/.local/bin/uv" ./scripts/install_systemd.sh
-sudo systemctl restart openclaw-gateway coder-bot
+./scripts/bootstrap.sh
 sudo systemctl status --no-pager coder-bot
 ```
 
-## 使用链路
+## 飞书使用方式
 
-标准使用方式只有一条：
+1. 在 handoff 群发送 `/issue <repo>` 查看待处理 issue。
+2. 发送 `/issue <repo> #<number> [model]` 进入该 issue 的讨论线程。
+3. 在线程里继续讨论，必要时发送 `/model <name>` 切模型。
+4. 发送 `/run` 或 `执行方案1` 开始执行。
+5. 结果、进度和 PR 链接都会回到同一个线程。
 
-1. 在 GitHub issue 评论区发送 `/run`
-2. 等机器人在飞书 handoff 群里创建讨论线程
-3. 先在线程里讨论方案
-4. 在线程里再次发送 `/run`，才会真正开始执行
+示例：
 
-执行完成后，结果会回到同一个飞书线程里。
+```text
+/issue deployer
+/issue deployer #108 gpt-5.5
+/model claude-opus-4-6
+/run
+```
 
-详细说明见：
+## 相关文档
 
 - [部署手册](docs/部署手册.md)
 - [使用手册](docs/使用手册.md)
