@@ -6,8 +6,10 @@ import { spawnSync } from "node:child_process";
 import { appendAuditLog } from "./lib/audit_log.mjs";
 import {
   enrichIssueBodyWithLatestAttachments,
+  ensureIssueFollowOwnerField,
   inferConversationContextFromLatestSession,
   parseArgs,
+  parseCsv,
   printJson,
   required,
   workspaceRootFromTool
@@ -29,7 +31,8 @@ import {
   resolveEntries,
   scopeMatches,
   slotKeyFor,
-  summarizePending
+  summarizePending,
+  updatePendingEntry
 } from "./lib/pending_store.mjs";
 
 function workspaceRoot() {
@@ -115,10 +118,13 @@ function buildExecCommand(kind, params) {
 
   const command = [path.join(toolsDir, toolName)];
   for (const [key, value] of Object.entries(params || {})) {
-    if (value === undefined || value === null || value === "") {
+    if (value === undefined || value === null) {
       continue;
     }
     const normalizedValue = Array.isArray(value) ? value.join(",") : String(value);
+    if (normalizedValue === "") {
+      continue;
+    }
     command.push(`--${key}`, normalizedValue);
   }
   command.push("--execute");
@@ -227,6 +233,91 @@ function resolveSingleEntryOrExit(action, root, scope, requester, repoQuery, dra
   return resolved;
 }
 
+function listValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  return parseCsv(value);
+}
+
+function mergeValues(current, additions) {
+  const merged = [];
+  const seen = new Set();
+  for (const value of [...listValue(current), ...listValue(additions)]) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(value);
+  }
+  return merged;
+}
+
+function removeValues(current, removals) {
+  const removeSet = new Set(listValue(removals).map((item) => item.toLowerCase()));
+  return listValue(current).filter((item) => !removeSet.has(item.toLowerCase()));
+}
+
+function appendBody(currentBody, addition) {
+  const text = String(addition || "").trim();
+  if (!text) {
+    return currentBody;
+  }
+  const body = String(currentBody || "").trimEnd();
+  return body ? `${body}\n\n${text}` : text;
+}
+
+function buildPatchFromArgs(args, entry) {
+  const paramsPatch = {};
+  const changed = [];
+  const currentParams = entry.params || {};
+
+  if (args.title !== undefined) {
+    paramsPatch.title = required("title", args.title);
+    changed.push("title");
+  }
+
+  if (args.appendBody !== undefined) {
+    paramsPatch.body = appendBody(currentParams.body, args.appendBody);
+    changed.push("body");
+  }
+
+  if (args.addLabels !== undefined) {
+    paramsPatch.labels = mergeValues(currentParams.labels, args.addLabels);
+    changed.push("labels");
+  }
+
+  if (args.removeLabels !== undefined) {
+    paramsPatch.labels = removeValues(currentParams.labels, args.removeLabels);
+    changed.push("labels");
+  }
+
+  if (args.addAssignees !== undefined) {
+    paramsPatch.assignees = mergeValues(currentParams.assignees, args.addAssignees);
+    changed.push("assignees");
+  }
+
+  if (args.removeAssignees !== undefined) {
+    paramsPatch.assignees = removeValues(currentParams.assignees, args.removeAssignees);
+    changed.push("assignees");
+  }
+
+  if (args.followOwner !== undefined) {
+    paramsPatch.followOwner = String(args.followOwner || "").trim();
+    paramsPatch.body = ensureIssueFollowOwnerField(
+      paramsPatch.body === undefined ? currentParams.body : paramsPatch.body,
+      paramsPatch.followOwner
+    );
+    changed.push("followOwner");
+  }
+
+  return {
+    params: paramsPatch,
+    changed: Array.from(new Set(changed))
+  };
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const action = args.action || "get";
@@ -243,7 +334,7 @@ function main() {
     const previewNote = args.previewNote || "";
     const parsedParams = JSON.parse(paramsJson);
     const decorated = maybeDecorateBody(kind, parsedParams);
-    const target = buildTargetFromParams(decorated.params);
+    const target = buildTargetFromParams(decorated.params, root);
     const payload = {
       version: 2,
       createdAt: new Date().toISOString(),
@@ -343,6 +434,40 @@ function main() {
       repoQuery,
       draftQuery,
       pending: summarizePending(cancelled.entry)
+    });
+    return;
+  }
+
+  if (action === "patch") {
+    const resolved = resolveSingleEntryOrExit(action, root, scope, requester, repoQuery, draftQuery);
+    const patch = buildPatchFromArgs(args, resolved.entry);
+    if (patch.changed.length === 0) {
+      throw new Error("No patch fields provided. Set title, appendBody, addLabels, removeLabels, addAssignees, removeAssignees, or followOwner.");
+    }
+    const updated = updatePendingEntry(root, resolved.entry.draftId, () => ({
+      headline: args.headline || resolved.entry.headline,
+      params: patch.params
+    }));
+    if (!updated?.ok) {
+      printStatusConflict(root, action, scope, requester, repoQuery, draftQuery, updated);
+    }
+    auditPending(root, "pending.patch", {
+      scope,
+      requester,
+      repoQuery,
+      draftQuery,
+      changed: patch.changed,
+      draft: summarizePending(updated.entry)
+    });
+    printJson({
+      ok: true,
+      action,
+      scope,
+      requester,
+      repoQuery,
+      draftQuery,
+      changed: patch.changed,
+      pending: updated.entry
     });
     return;
   }

@@ -1,6 +1,10 @@
 import unittest
 
-from src.clients.codex_client import parse_codex_jsonl_events, parse_codex_jsonl_usage
+from src.clients.codex_client import (
+    parse_codex_jsonl_error_messages,
+    parse_codex_jsonl_events,
+    parse_codex_jsonl_usage,
+)
 
 
 class CodexClientTests(unittest.TestCase):
@@ -56,6 +60,24 @@ class CodexClientTests(unittest.TestCase):
                 "reasoning_output_tokens": 0,
                 "total_tokens": 20,
             },
+        )
+
+    def test_parse_codex_jsonl_error_messages_collects_runtime_errors(self) -> None:
+        messages = parse_codex_jsonl_error_messages(
+            "\n".join(
+                [
+                    '{"type":"error","message":"Reconnecting... 1/5"}',
+                    '{"type":"turn.failed","error":{"message":"unexpected status 503 Service Unavailable"}}',
+                ]
+            )
+        )
+
+        self.assertEqual(
+            messages,
+            [
+                "Reconnecting... 1/5",
+                "unexpected status 503 Service Unavailable",
+            ],
         )
 
 

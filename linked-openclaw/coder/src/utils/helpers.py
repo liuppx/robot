@@ -70,17 +70,21 @@ def service_actor_name() -> str:
 
 
 def backend_label(config: dict[str, Any]) -> str:
-    backend = str(config.get("execution_backend") or "openclaw").strip().lower()
+    backend = str(config.get("execution_backend") or "codex").strip().lower()
     if backend == "codex":
         return "Codex"
-    return "OpenClaw"
+    if backend == "claude":
+        return "Claude"
+    return backend.capitalize() or "Codex"
 
 
 def backend_model_label(config: dict[str, Any]) -> str:
-    backend = str(config.get("execution_backend") or "openclaw").strip().lower()
+    backend = str(config.get("execution_backend") or "codex").strip().lower()
+    if backend == "claude":
+        return str(config.get("claude_model") or "")
     if backend == "codex":
         return str(config.get("codex_model") or "")
-    return config["openclaw_model"]
+    return ""
 
 
 def run_command(

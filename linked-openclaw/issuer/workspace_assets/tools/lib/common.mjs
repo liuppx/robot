@@ -69,7 +69,9 @@ export function workspaceRootFromHook(importMetaUrl) {
 function isAppRootCandidate(candidate) {
   return (
     fs.existsSync(path.join(candidate, "scripts", "bootstrap.sh")) &&
-    fs.existsSync(path.join(candidate, "config", "github-app.config.env.example")) &&
+    (fs.existsSync(path.join(candidate, "config", "github-app.config.env")) ||
+      fs.existsSync(path.join(candidate, "config", "github-app.config.env.template")) ||
+      fs.existsSync(path.join(candidate, "config", "github-app.config.env.example"))) &&
     fs.existsSync(path.join(candidate, "workspace_assets"))
   );
 }

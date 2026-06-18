@@ -270,3 +270,98 @@ def comment_issue(
         token=token,
         json_body={"body": body},
     )
+
+
+STATUS_LABEL_DEFS = [
+    ("issue_label_accepted_name", "issue_label_accepted_color"),
+    ("issue_label_in_progress_name", "issue_label_in_progress_color"),
+    ("issue_label_pr_ready_name", "issue_label_pr_ready_color"),
+]
+
+
+def ensure_label(
+    config: dict[str, Any],
+    token: str,
+    owner: str,
+    repo: str,
+    name: str,
+    color: str,
+) -> None:
+    try:
+        github_request(
+            config,
+            "GET",
+            f"/repos/{owner}/{repo}/labels/{requests.utils.quote(name, safe='')}",
+            token=token,
+        )
+        return
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            pass
+        else:
+            raise
+    github_request(
+        config,
+        "POST",
+        f"/repos/{owner}/{repo}/labels",
+        token=token,
+        json_body={"name": name, "color": color},
+    )
+
+
+def set_issue_status_label(
+    config: dict[str, Any],
+    token: str,
+    owner: str,
+    repo: str,
+    issue_number: int,
+    active_label_config_key: str,
+) -> None:
+    """Set one status label on an issue and remove the other mutually exclusive ones. Non-fatal."""
+    try:
+        active_name = config.get(active_label_config_key, "")
+        active_color = ""
+        for name_key, color_key in STATUS_LABEL_DEFS:
+            if name_key == active_label_config_key:
+                active_color = config.get(color_key, "cccccc")
+                break
+        if not active_name:
+            return
+
+        ensure_label(config, token, owner, repo, active_name, active_color)
+
+        current_labels = github_request(
+            config,
+            "GET",
+            f"/repos/{owner}/{repo}/issues/{issue_number}",
+            token=token,
+        ).json().get("labels", [])
+        current_label_names = {
+            str(lbl["name"]) for lbl in current_labels if isinstance(lbl, dict)
+        }
+
+        if active_name not in current_label_names:
+            github_request(
+                config,
+                "POST",
+                f"/repos/{owner}/{repo}/issues/{issue_number}/labels",
+                token=token,
+                json_body={"labels": [active_name]},
+            )
+
+        for name_key, _ in STATUS_LABEL_DEFS:
+            if name_key == active_label_config_key:
+                continue
+            candidate = config.get(name_key, "")
+            if candidate and candidate in current_label_names:
+                try:
+                    github_request(
+                        config,
+                        "DELETE",
+                        f"/repos/{owner}/{repo}/issues/{issue_number}/labels/{requests.utils.quote(candidate, safe='')}",
+                        token=token,
+                    )
+                except requests.HTTPError:
+                    pass
+    except Exception as exc:
+        print(f"warning: failed to sync issue status label for {owner}/{repo}#{issue_number}: {exc}")

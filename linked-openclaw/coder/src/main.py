@@ -10,7 +10,6 @@ import src.config as config_module
 import src.db as db_module
 import src.scheduler as scheduler_module
 from src import worker as worker_module
-from src.clients import openclaw_client as openclaw_module
 from src.issue_service import IssueService
 from src.utils.helpers import ensure_dir, now_utc
 from src.webhook_server import WebhookContext, create_app
@@ -73,6 +72,7 @@ def _worker_context() -> worker_module.WorkerContext:
         ensure_issue_session=service.ensure_issue_session,
         upsert_issue_session=service.upsert_issue_session,
         cleanup_closed_issue_if_finished=service.cleanup_closed_issue_if_finished,
+        reply_issue_progress_to_feishu=service.reply_issue_progress_to_feishu,
         reply_issue_execution_result_to_feishu=service.reply_issue_execution_result_to_feishu,
     )
 
@@ -102,9 +102,6 @@ def initialize_runtime(env_file: Path) -> None:
     ensure_dir(CONFIG["active_dir"])
     ensure_dir(Path(CONFIG["state_file"]).parent)
     ensure_dir(CONFIG["log_dir"])
-    ensure_dir(Path(CONFIG["openclaw_runtime_config_path"]).parent)
-    ensure_dir(CONFIG["openclaw_state_dir"])
-    openclaw_module.ensure_openclaw_runtime_config(CONFIG)
     db_module.init_db(CONFIG)
     ISSUE_SERVICE = IssueService(CONFIG, RUNTIME)
 
@@ -131,7 +128,6 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("serve")
     subparsers.add_parser("doctor")
-    subparsers.add_parser("prepare-openclaw-runtime")
     run_job = subparsers.add_parser("run-job")
     run_job.add_argument("job_id")
     return parser.parse_args()
@@ -147,13 +143,6 @@ def main() -> None:
 
     if args.command == "doctor":
         raise SystemExit(config_module.run_doctor(CONFIG, env_file))
-
-    if args.command == "prepare-openclaw-runtime":
-        ensure_dir(Path(CONFIG["openclaw_runtime_config_path"]).parent)
-        ensure_dir(CONFIG["openclaw_state_dir"])
-        runtime_path, _ = openclaw_module.ensure_openclaw_runtime_config(CONFIG)
-        print(runtime_path)
-        return
 
     if args.command == "serve":
         bootstrap_service(env_file)

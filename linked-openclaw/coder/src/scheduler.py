@@ -5,6 +5,7 @@ import os
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,10 @@ from src.utils.helpers import ensure_dir, now_utc, short_text
 ACTIVE_JOB_STATUSES = ("queued", "running")
 STATE_LOCK = threading.Lock()
 DISPATCH_THREAD: threading.Thread | None = None
+DISCUSSION_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="feishu-discussion")
+DISCUSSION_INFLIGHT: set[str] = set()
+DISCUSSION_LOCK = threading.Lock()
+DISCUSSION_ACK_TEXT = "收到，正在分析这个 issue 的方案。"
 
 
 @dataclass
@@ -46,6 +51,140 @@ def session_allows_feishu_followup(session_state: str | None) -> bool:
     # failed keeps the same issue/thread context, so a later `/run`
     # in the same thread should be allowed to queue a retry.
     return normalized in {"waiting_confirm", "bound", "failed"}
+
+
+def feishu_discussion_key(binding: sqlite3.Row | dict[str, Any], latest_message: dict[str, Any]) -> str:
+    return ":".join(
+        [
+            str(binding["chat_id"] or "").strip(),
+            str(binding["thread_id"] or "").strip(),
+            str(latest_message.get("message_id") or "").strip(),
+        ]
+    )
+
+
+def is_fast_feishu_discussion_command(message: dict[str, Any]) -> bool:
+    normalized = feishu_module.normalize_confirm_text(str(message.get("content") or ""))
+    return normalized == "/model" or normalized.startswith("/model ")
+
+
+def reply_feishu_discussion_now(
+    context: SchedulerContext,
+    repo_full_name: str,
+    issue_number: int,
+    *,
+    binding: sqlite3.Row | dict[str, Any],
+    recent_messages: list[dict[str, Any]],
+) -> None:
+    try:
+        context.reply_issue_discussion_to_feishu(
+            context.config,
+            repo_full_name,
+            issue_number,
+            binding=binding,
+            recent_messages=recent_messages,
+        )
+    except Exception as exc:
+        error_summary = short_text(worker_module.user_friendly_error_summary(str(exc)), 700)
+        print(
+            f"warning: failed to proxy Feishu discussion for "
+            f"{repo_full_name}#{issue_number}: {error_summary}"
+        )
+        root_message_id = (
+            str(binding["root_message_id"] or "").strip()
+            or str(binding["prompt_message_id"] or "").strip()
+        )
+        if root_message_id:
+            try:
+                feishu_module.feishu_reply_in_thread(
+                    context.config,
+                    context.runtime,
+                    root_message_id,
+                    f"讨论阶段回复失败，请稍后重试。\n\n错误摘要：{error_summary}",
+                )
+            except Exception as reply_exc:
+                print(
+                    f"warning: failed to post discussion error reply for "
+                    f"{repo_full_name}#{issue_number}: {reply_exc}"
+                )
+
+
+def run_queued_feishu_discussion_reply(
+    context: SchedulerContext,
+    repo_full_name: str,
+    issue_number: int,
+    *,
+    binding: dict[str, Any],
+    recent_messages: list[dict[str, Any]],
+    discussion_key: str,
+) -> None:
+    try:
+        session_row = context.get_issue_session(repo_full_name, issue_number)
+        if session_row is not None and not session_allows_feishu_followup(str(session_row["session_state"] or "")):
+            return
+        reply_feishu_discussion_now(
+            context,
+            repo_full_name,
+            issue_number,
+            binding=binding,
+            recent_messages=recent_messages,
+        )
+    finally:
+        with DISCUSSION_LOCK:
+            DISCUSSION_INFLIGHT.discard(discussion_key)
+
+
+def enqueue_feishu_discussion_reply(
+    context: SchedulerContext,
+    repo_full_name: str,
+    issue_number: int,
+    *,
+    binding: sqlite3.Row,
+    recent_messages: list[dict[str, Any]],
+    latest_message: dict[str, Any],
+) -> bool:
+    discussion_key = feishu_discussion_key(binding, latest_message)
+    if not discussion_key:
+        return False
+    with DISCUSSION_LOCK:
+        if discussion_key in DISCUSSION_INFLIGHT:
+            return False
+        DISCUSSION_INFLIGHT.add(discussion_key)
+
+    binding_snapshot = dict(binding)
+    root_message_id = (
+        str(binding_snapshot.get("root_message_id") or "").strip()
+        or str(binding_snapshot.get("prompt_message_id") or "").strip()
+    )
+    if root_message_id:
+        try:
+            feishu_module.feishu_reply_in_thread(
+                context.config,
+                context.runtime,
+                root_message_id,
+                DISCUSSION_ACK_TEXT,
+            )
+        except Exception as exc:
+            print(
+                f"warning: failed to post discussion ack for "
+                f"{repo_full_name}#{issue_number}: {short_text(str(exc), 800)}"
+            )
+
+    try:
+        DISCUSSION_EXECUTOR.submit(
+            run_queued_feishu_discussion_reply,
+            context,
+            repo_full_name,
+            issue_number,
+            binding=binding_snapshot,
+            recent_messages=list(recent_messages),
+            discussion_key=discussion_key,
+        )
+    except Exception:
+        with DISCUSSION_LOCK:
+            DISCUSSION_INFLIGHT.discard(discussion_key)
+        raise
+    return True
 
 
 def default_state() -> dict[str, Any]:
@@ -281,6 +420,8 @@ def scan_feishu_chat_commands(context: SchedulerContext) -> None:
                 continue
             newest_seen_id = str(message.get("message_id") or newest_seen_id)
             newest_seen_time = str(message.get("create_time") or newest_seen_time)
+            if str(message.get("thread_id") or "").strip():
+                continue
             if str(message.get("sender_type") or "").strip().lower() != "user":
                 continue
             try:
@@ -400,44 +541,37 @@ def scan_waiting_feishu_confirmations(context: SchedulerContext) -> None:
                 break
             discussion_messages.append(message)
 
-        if discussion_messages:
+        if discussion_messages and confirm_message is None:
             latest_message = discussion_messages[-1]
-            try:
-                visible_messages = []
-                for item in messages:
-                    visible_messages.append(item)
-                    if str(item.get("message_id") or "") == str(latest_message.get("message_id") or ""):
-                        break
-                context.reply_issue_discussion_to_feishu(
-                    context.config,
+            visible_messages = []
+            for item in messages:
+                visible_messages.append(item)
+                if str(item.get("message_id") or "") == str(latest_message.get("message_id") or ""):
+                    break
+            if is_fast_feishu_discussion_command(latest_message):
+                reply_feishu_discussion_now(
+                    context,
                     repo_full_name,
                     issue_number,
                     binding=binding,
                     recent_messages=visible_messages,
                 )
-            except Exception as exc:
-                error_summary = short_text(str(exc), 1500)
-                print(
-                    f"warning: failed to proxy Feishu discussion for "
-                    f"{repo_full_name}#{issue_number}: {error_summary}"
-                )
-                root_message_id = (
-                    str(binding["root_message_id"] or "").strip()
-                    or str(binding["prompt_message_id"] or "").strip()
-                )
-                if root_message_id:
-                    try:
-                        feishu_module.feishu_reply_in_thread(
-                            context.config,
-                            context.runtime,
-                            root_message_id,
-                            f"讨论阶段回复失败，请稍后重试。\n\n错误摘要：{error_summary}",
-                        )
-                    except Exception as reply_exc:
-                        print(
-                            f"warning: failed to post discussion error reply for "
-                            f"{repo_full_name}#{issue_number}: {reply_exc}"
-                        )
+            else:
+                try:
+                    enqueue_feishu_discussion_reply(
+                        context,
+                        repo_full_name,
+                        issue_number,
+                        binding=binding,
+                        recent_messages=visible_messages,
+                        latest_message=latest_message,
+                    )
+                except Exception as exc:
+                    error_summary = short_text(worker_module.user_friendly_error_summary(str(exc)), 700)
+                    print(
+                        f"warning: failed to enqueue Feishu discussion for "
+                        f"{repo_full_name}#{issue_number}: {error_summary}"
+                    )
 
         if confirm_message is None:
             if newest_seen_id != str(binding["last_seen_message_id"] or "").strip() or newest_seen_time != str(
