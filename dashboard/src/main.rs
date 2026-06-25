@@ -291,7 +291,7 @@ async fn main() {
             post(internal_runtime_probe),
         );
 
-    let web_dir = format!("{}/rust/control-plane/web", cfg.repo_root);
+    let web_dir = format!("{}/dashboard/web", cfg.repo_root);
     let index_file = format!("{web_dir}/index.html");
 
     let app = Router::new()
@@ -336,22 +336,12 @@ fn init_tracing() {
 
 fn guess_repo_root() -> String {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if cwd.ends_with("rust/control-plane") {
+    if cwd.ends_with("dashboard") {
         return cwd
             .parent()
-            .and_then(|p| p.parent())
             .unwrap_or(&cwd)
             .to_string_lossy()
             .to_string();
-    }
-    if let Some(parent) = cwd.parent() {
-        if parent.ends_with("rust") {
-            return parent
-                .parent()
-                .unwrap_or(parent)
-                .to_string_lossy()
-                .to_string();
-        }
     }
     cwd.to_string_lossy().to_string()
 }

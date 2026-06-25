@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/rust/control-plane"
+APP_DIR="$ROOT_DIR/dashboard"
 CONFIG_DIR="$ROOT_DIR/config"
 ENV_TEMPLATE="$CONFIG_DIR/bot-hub.env.template"
 ENV_FILE="$CONFIG_DIR/bot-hub.env"
@@ -10,12 +10,12 @@ LEGACY_ENV_FILE="$APP_DIR/.env"
 
 SKIP_OPENCLAW_INSTALL="${SKIP_OPENCLAW_INSTALL:-0}"
 
-echo "[step] bootstrap rust control-plane"
+echo "[step] bootstrap dashboard"
 bash "$ROOT_DIR/scripts/bootstrap_rust_control_plane.sh"
 
 if [[ ! -f "$ENV_TEMPLATE" ]]; then
   cp "$APP_DIR/.env.example" "$ENV_TEMPLATE"
-  echo "[info] created $ENV_TEMPLATE from rust/control-plane/.env.example"
+  echo "[info] created $ENV_TEMPLATE from dashboard/.env.example"
 fi
 
 if [[ ! -f "$ENV_FILE" ]]; then

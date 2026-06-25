@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/config/bot-hub.env"
-LEGACY_ENV_FILE="$ROOT_DIR/rust/control-plane/.env"
+LEGACY_ENV_FILE="$ROOT_DIR/dashboard/.env"
 
 bash "$ROOT_DIR/scripts/bootstrap_full_stack.sh"
 
