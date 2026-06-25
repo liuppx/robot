@@ -1,9 +1,18 @@
-# Bot Hub
+# Robot
 
-## 项目名称
-Bot Hub 控制平面（OpenClaw 多机器人统一编排）
+## 项目定位
+
+Robot 当前的主产品形态是 **Bot Hub 控制平面**，用于统一部署、管理和编排多种机器人实例，并动态装配技能、工具与渠道能力。
+
+当前仓库里保留了运行时代码、OpenClaw 相关联代码、运维脚本和历史参考材料。为了避免误解，先给出主入口：
+
+- **当前生产入口**：`rust/control-plane/`
+- **标准启动脚本**：`scripts/starter.sh`
+- **标准打包脚本**：`scripts/package.sh`
+- **仓库结构说明**：`docs/repository-layout.md`
 
 ### 项目简介
+
 本仓库当前以 **Bot 平面** 为唯一生产入口：
 
 - 提供 Web 控制台（钱包登录）
@@ -25,6 +34,18 @@ Bot Hub 控制平面（OpenClaw 多机器人统一编排）
 - ✅ 标准启动脚本：`scripts/starter.sh`
 - ✅ 标准打包脚本：`scripts/package.sh`
 - ✅ Legacy 文档归档到 `docs/archive/legacy/`
+
+## 仓库分区
+
+- `rust/control-plane/`：当前 Bot Hub 控制平面服务和 Web 控制台
+- `scripts/`：部署、启动、打包、体检、验证脚本
+- `config/`：当前运行配置模板
+- `docs/`：当前设计文档和运维手册
+- `robots/openclaw/`：当前受控机器人实现目录，包含基于 OpenClaw 的机器人子系统
+- `robots/nanobot/`：纳入统一机器人目录的 nanobot 实现
+- `workspace/`：机器人实例使用的工作区模板
+
+完整说明见 `docs/repository-layout.md`。
 
 ## 快速开始
 

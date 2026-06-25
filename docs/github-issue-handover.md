@@ -1,6 +1,6 @@
 # GitHub Issue 机器人实现交接
 
-> 说明：当前 canonical 应用目录已经迁到 `linked-openclaw/issuer/`，旧的 `example/example_feishuGitIssue/` 运行目录也已经移除。本文下面大量代码定位仍引用旧路径，只能作为历史交接索引，不能再当成现行文件定位使用。
+> 说明：当前 canonical 应用目录已经迁到 `robots/openclaw/issuer/`，旧的 `example/example_feishuGitIssue/` 运行目录也已经移除。本文下面大量代码定位仍引用旧路径，只能作为历史交接索引，不能再当成现行文件定位使用。
 
 ## 一图总览
 
