@@ -13,7 +13,7 @@ flowchart LR
 
 ## 2. 必经步骤
 
-1. 在 WSL 安装 Node + OpenClaw（版本锁定见 `versions.lock`）
+1. 在 WSL 安装 Node + OpenClaw（版本锁定见 `scripts/setup/openclaw.versions.lock`）
 2. 配置 Router 与 WhatsApp 策略（`scripts/configure_openclaw.sh`）
 3. 应用 WhatsApp 兼容补丁（`scripts/apply_whatsapp_patch.sh`）
 4. 扫码登录（`openclaw channels login --channel whatsapp --verbose`）
