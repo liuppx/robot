@@ -18,8 +18,9 @@ INTERACTIVE="${INTERACTIVE:-true}"
 # 非交互模式下，是否自动使用最近提交信息填充 PR 标题和描述
 AUTO_FILL_PR="${AUTO_FILL_PR:-true}"
 
-# 若设置为 true，检测到 GH_TOKEN 时优先使用 gh auth login 的本地凭据
-PREFER_GH_AUTH_LOGIN="${PREFER_GH_AUTH_LOGIN:-true}"
+# 若设置为 true，且本机已存在 gh auth login 登录态，则优先使用本地凭据。
+# 默认优先允许 GH_TOKEN 路径，避免“明明有 token 仍先卡在 gh auth login”的情况。
+PREFER_GH_AUTH_LOGIN="${PREFER_GH_AUTH_LOGIN:-false}"
 
 # =============================================
 
@@ -261,13 +262,31 @@ if ! command -v gh >/dev/null 2>&1; then
   install_gh
 fi
 
-if [ "$PREFER_GH_AUTH_LOGIN" = "true" ] && [ -n "${GH_TOKEN:-}" ]; then
-  info "检测到 GH_TOKEN。为避免 token 权限不足，默认忽略 GH_TOKEN，改用 gh auth login 凭据。"
-  unset GH_TOKEN
+HAS_GH_TOKEN="false"
+if [ -n "${GH_TOKEN:-}" ]; then
+  HAS_GH_TOKEN="true"
 fi
 
-if ! gh auth status -h github.com >/dev/null 2>&1; then
-  info "未检测到 gh 登录状态，请先执行：gh auth login -h github.com -s repo"
+HAS_GH_AUTH_LOGIN="false"
+if gh auth status -h github.com >/dev/null 2>&1; then
+  HAS_GH_AUTH_LOGIN="true"
+fi
+
+if [ "$HAS_GH_TOKEN" = "true" ]; then
+  if [ "$PREFER_GH_AUTH_LOGIN" = "true" ] && [ "$HAS_GH_AUTH_LOGIN" = "true" ]; then
+    info "检测到 GH_TOKEN 和 gh auth login 登录态。按配置优先使用 gh auth login 本地凭据。"
+    unset GH_TOKEN
+    HAS_GH_TOKEN="false"
+  else
+    info "检测到 GH_TOKEN，优先使用 token 路径创建 PR。"
+  fi
+fi
+
+if [ "$HAS_GH_AUTH_LOGIN" != "true" ] && [ "$HAS_GH_TOKEN" != "true" ]; then
+  info "未检测到可用的 GitHub 认证。"
+  info "请执行以下任一方式后重试："
+  info "  1) export GH_TOKEN=<token>"
+  info "  2) gh auth login -h github.com -s repo"
   exit 1
 fi
 
