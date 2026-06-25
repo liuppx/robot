@@ -4,7 +4,7 @@
 
 如果你要在一台已经安装 OpenClaw 的机器上把 Issue 机器人手动跑起来，先看 [github机器人部署手册.md](github机器人部署手册.md)。
 
-当前这套 MVP 的 canonical 代码目录统一放在 `linked-openclaw/issuer/`，默认不依赖 GitHub webhook。
+当前这套 MVP 的 canonical 代码目录统一放在 `robots/openclaw/issuer/`，默认不依赖 GitHub webhook。
 
 ```mermaid
 flowchart TB

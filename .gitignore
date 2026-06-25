@@ -21,6 +21,8 @@ sdist/
 var/
 wheels/
 share/python-wheels/
+!robots/openclaw/issuer/workspace_assets/tools/lib/
+!robots/openclaw/issuer/workspace_assets/tools/lib/**
 *.egg-info/
 .installed.cfg
 *.egg

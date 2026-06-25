@@ -4,9 +4,9 @@
 
 当前请直接看：
 
-- `linked-openclaw/issuer/docs/部署手册.md`
-- `linked-openclaw/issuer/docs/使用手册.md`
+- `robots/openclaw/issuer/docs/部署手册.md`
+- `robots/openclaw/issuer/docs/使用手册.md`
 
 如果你准备部署到 `/opt/deploy/issuer`，优先阅读：
 
-- `linked-openclaw/issuer/docs/部署手册.md`
+- `robots/openclaw/issuer/docs/部署手册.md`
