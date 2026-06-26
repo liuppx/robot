@@ -18,18 +18,27 @@ fi
 
 rm -f "${PID_FILE}"
 
+start_detached() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" </dev/null >>"${LOG_FILE}" 2>&1 &
+  else
+    nohup "$@" </dev/null >>"${LOG_FILE}" 2>&1 &
+  fi
+}
+
 (
   cd "${APP_DIR}"
   if [[ -x "${VENV_BIN}" ]]; then
-    nohup "${VENV_BIN}" run-loop --env-file "${ENV_FILE}" >>"${LOG_FILE}" 2>&1 &
+    start_detached "${VENV_BIN}" run-loop --env-file "${ENV_FILE}"
   else
     if [[ -z "${UV_BIN}" ]]; then
       echo "uv not found and ${VENV_BIN} is missing" >>"${LOG_FILE}"
       exit 1
     fi
-    nohup "${UV_BIN}" run --directory "${APP_DIR}" trader-bot run-loop --env-file "${ENV_FILE}" >>"${LOG_FILE}" 2>&1 &
+    start_detached "${UV_BIN}" run --directory "${APP_DIR}" trader-bot run-loop --env-file "${ENV_FILE}"
   fi
   echo $! > "${PID_FILE}"
+  disown "$!" 2>/dev/null || true
 )
 
 sleep 1
