@@ -51,6 +51,11 @@
     .record-table { width:100%; border-collapse: collapse; font-size:13px; }
     .record-table th, .record-table td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:left; vertical-align:top; }
     .record-table th { background:#f8fbff; color:var(--sub); font-weight:700; }
+    .record-list { display:grid; gap:8px; }
+    .record-item { background:#f8fbff; border:1px solid var(--line); border-radius:10px; padding:10px; cursor:pointer; display:grid; gap:4px; }
+    .record-item.active { border-color:#0b66ff; box-shadow: inset 0 0 0 1px #0b66ff; background:#eef6ff; }
+    .record-item .title { font-weight:700; }
+    .record-detail-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:10px; }
     button.loading { position: relative; pointer-events: none; color: transparent !important; }
     button.loading::after {
       content: "";
@@ -91,7 +96,7 @@
     .tag.pair-idle { background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
     #toast { position: fixed; right: 16px; bottom: 16px; background: #111827; color: #fff; padding: 10px 14px; border-radius: 9px; opacity: 0; transform: translateY(8px); transition: all .2s; pointer-events: none; }
     #toast.show { opacity: 1; transform: translateY(0); }
-    @media (max-width: 900px) { .grid2, .kv, .wide-grid, .robot-grid { grid-template-columns: 1fr; } .wrap { padding: 10px; } }
+    @media (max-width: 900px) { .grid2, .kv, .wide-grid, .robot-grid, .record-detail-grid { grid-template-columns: 1fr; } .wrap { padding: 10px; } }
   </style>
 </head>
 <body>
@@ -398,12 +403,12 @@
 
         <div id="traderRecordsSection" class="grid2 hidden">
           <div class="band">
-            <div class="muted" style="margin-bottom:8px;">最近信号</div>
-            <div id="traderSignals">暂无数据</div>
+            <div class="muted" style="margin-bottom:8px;">运行记录列表</div>
+            <div id="traderRecordList">暂无数据</div>
           </div>
           <div class="band">
-            <div class="muted" style="margin-bottom:8px;">最近订单</div>
-            <div id="traderOrders">暂无数据</div>
+            <div class="muted" style="margin-bottom:8px;">记录详情</div>
+            <div id="traderRecordDetail">暂无数据</div>
           </div>
         </div>
       </div>
@@ -586,6 +591,7 @@ const state = {
   trader: null,
   workspace: 'list',
   traderDetailSection: 'overview',
+  traderSelectedRecordId: null,
   refreshTimer: null,
   authTimer: null,
   currentLogInstanceId: null,
@@ -643,69 +649,87 @@ function shortTime(value) {
   return parts[0] + ' ' + parts[1].slice(0, 8);
 }
 
-function renderSignalRows(items) {
-  if (!items || !items.length) {
-    return '<div class="muted">暂无信号记录</div>';
+function buildTraderRecordList(data) {
+  const signals = (data?.recent_signals || []).map((item, idx) => ({
+    id: `signal-${idx}-${item.ts || ''}`,
+    kind: 'signal',
+    ts: item.ts,
+    title: `${item.action || '-'} ${item.symbol || '-'}`,
+    subtitle: item.reason || '-',
+    summary: `${item.strategyId || '-'} / ${item.latestPrice ?? '-'}`,
+    payload: item,
+  }));
+  const orders = (data?.recent_orders || []).map((item, idx) => ({
+    id: `order-${idx}-${item.ts || ''}`,
+    kind: 'order',
+    ts: item.ts,
+    title: `${item.side || '-'} ${item.symbol || '-'}`,
+    subtitle: `${item.quantity ?? '-'} 股 / ${item.result?.mode || '-'}`,
+    summary: `${item.strategyId || '-'} / ${item.latestPrice ?? '-'}`,
+    payload: item,
+  }));
+  return [...signals, ...orders].sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+}
+
+function renderTraderRecordList(records) {
+  if (!records.length) {
+    return '<div class="muted">暂无运行记录</div>';
   }
-  const rows = items.map(item => `
-    <tr>
-      <td>${shortTime(item.ts)}</td>
-      <td>${item.strategyId || '-'}</td>
-      <td>${item.symbol || '-'}</td>
-      <td>${item.action || '-'}</td>
-      <td>${item.latestPrice ?? '-'}</td>
-      <td>${item.riskOk ? '通过' : '拦截'}</td>
-      <td>${item.reason || '-'}</td>
-    </tr>
-  `).join('');
   return `
-    <table class="record-table">
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>策略</th>
-          <th>标的</th>
-          <th>动作</th>
-          <th>价格</th>
-          <th>风控</th>
-          <th>说明</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="record-list">
+      ${records.map(record => `
+        <div class="record-item ${state.traderSelectedRecordId === record.id ? 'active' : ''}" data-record-id="${record.id}">
+          <div class="title">${record.kind === 'signal' ? '信号' : '订单'} · ${record.title}</div>
+          <div class="muted">${shortTime(record.ts)}</div>
+          <div class="muted">${record.summary}</div>
+          <div class="muted">${record.subtitle}</div>
+        </div>
+      `).join('')}
+    </div>
   `;
 }
 
-function renderOrderRows(items) {
-  if (!items || !items.length) {
-    return '<div class="muted">暂无订单记录</div>';
+function renderTraderRecordDetail(record) {
+  if (!record) {
+    return '<div class="muted">请选择一条运行记录查看详情</div>';
   }
-  const rows = items.map(item => `
-    <tr>
-      <td>${shortTime(item.ts)}</td>
-      <td>${item.strategyId || '-'}</td>
-      <td>${item.symbol || '-'}</td>
-      <td>${item.side || '-'}</td>
-      <td>${item.quantity ?? '-'}</td>
-      <td>${item.latestPrice ?? '-'}</td>
-      <td>${item.result?.mode || '-'}</td>
-    </tr>
-  `).join('');
+  const payload = record.payload || {};
+  const rows = record.kind === 'signal'
+    ? [
+        ['类型', '信号'],
+        ['时间', shortTime(record.ts)],
+        ['策略', payload.strategyId || '-'],
+        ['标的', payload.symbol || '-'],
+        ['动作', payload.action || '-'],
+        ['价格', payload.latestPrice ?? '-'],
+        ['风控', payload.riskOk ? '通过' : '拦截'],
+        ['原因', payload.reason || '-'],
+      ]
+    : [
+        ['类型', '订单'],
+        ['时间', shortTime(record.ts)],
+        ['策略', payload.strategyId || '-'],
+        ['标的', payload.symbol || '-'],
+        ['方向', payload.side || '-'],
+        ['数量', payload.quantity ?? '-'],
+        ['价格', payload.latestPrice ?? '-'],
+        ['模式', payload.result?.mode || '-'],
+      ];
   return `
-    <table class="record-table">
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>策略</th>
-          <th>标的</th>
-          <th>方向</th>
-          <th>数量</th>
-          <th>价格</th>
-          <th>模式</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="stack">
+      <div class="record-detail-grid">
+        ${rows.map(([label, value]) => `
+          <div class="surface">
+            <div class="muted">${label}</div>
+            <div style="font-weight:700; overflow-wrap:anywhere;">${value}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div>
+        <div class="muted" style="margin-bottom:8px;">原始记录</div>
+        <pre>${JSON.stringify(payload, null, 2)}</pre>
+      </div>
+    </div>
   `;
 }
 
@@ -987,9 +1011,20 @@ function renderTraderSummary() {
     document.getElementById('traderLatestChangePct').textContent = latestPct;
     document.getElementById('traderLatestRisk').textContent = latest?.riskOk ? '通过' : (latest ? '拦截' : '-');
   }
+  const records = buildTraderRecordList(data);
+  if (!records.some(record => record.id === state.traderSelectedRecordId)) {
+    state.traderSelectedRecordId = records[0]?.id || null;
+  }
+  const selectedRecord = records.find(record => record.id === state.traderSelectedRecordId) || null;
   document.getElementById('traderState').textContent = data ? JSON.stringify(data.state || {}, null, 2) : '暂无数据';
-  document.getElementById('traderSignals').innerHTML = renderSignalRows(data?.recent_signals || []);
-  document.getElementById('traderOrders').innerHTML = renderOrderRows(data?.recent_orders || []);
+  document.getElementById('traderRecordList').innerHTML = renderTraderRecordList(records);
+  document.getElementById('traderRecordDetail').innerHTML = renderTraderRecordDetail(selectedRecord);
+  document.querySelectorAll('[data-record-id]').forEach(el => {
+    el.onclick = () => {
+      state.traderSelectedRecordId = el.dataset.recordId;
+      renderTraderSummary();
+    };
+  });
   document.getElementById('traderLogs').textContent = data?.service_log_tail || '暂无数据';
   renderTraderConfigForm();
 }
