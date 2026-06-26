@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bot Hub</title>
+  <title>信使</title>
   <style>
     :root {
       --bg: #f2f6fb;
@@ -158,12 +158,12 @@
         <div class="logo">BH</div>
         <div>
           <h1>Robot 控制台</h1>
-          <p>登录后进入交易机器人工作台，Bot Hub 的多实例能力保留在次级页面</p>
+          <p>登录后进入交易机器人工作台，信使的多实例能力保留在次级页面</p>
         </div>
       </div>
       <div class="card" style="margin-top:12px;">
         <div class="between">
-          <div class="muted">先连接钱包才能进入控制台。当前默认工作区是交易员，其他 Bot Hub 能力会收纳到次级视图。</div>
+          <div class="muted">先连接钱包才能进入控制台。当前默认工作区是交易员，其他信使能力会收纳到次级视图。</div>
           <button id="btnLogin">连接钱包并登录</button>
         </div>
       </div>
@@ -179,7 +179,7 @@
           <div class="logo">BH</div>
           <div>
             <h2>Robot 控制台</h2>
-            <p>默认聚焦交易员；Bot Hub 的 WhatsApp / 钉钉实例管理保留在次级工作区</p>
+            <p>默认聚焦交易员；信使的 WhatsApp / 钉钉实例管理保留在次级工作区</p>
           </div>
         </div>
         <div class="row">
@@ -219,7 +219,7 @@
             <div class="row">
               <div class="logo">BH</div>
               <div>
-                <h3>Bot Hub</h3>
+                <h3>信使</h3>
                 <div class="muted">多实例消息机器人管理</div>
               </div>
             </div>
@@ -229,7 +229,7 @@
               <div class="muted">能力：WhatsApp / DingTalk</div>
             </div>
             <div class="row">
-              <button id="btnOpenBotHub">进入 Bot Hub</button>
+              <button id="btnOpenBotHub">进入信使</button>
             </div>
           </div>
         </div>
@@ -553,14 +553,14 @@
         <div class="band detail-head">
           <div>
             <div class="muted">机器人详情</div>
-            <h3 class="panel-title">Bot Hub</h3>
+            <h3 class="panel-title">信使</h3>
             <div class="muted">WhatsApp / 钉钉多实例机器人管理</div>
           </div>
           <button class="secondary" id="btnBackFromBotHub" type="button">返回机器人列表</button>
         </div>
 
         <div class="band">
-          <h3 class="panel-title">Bot Hub 管理</h3>
+          <h3 class="panel-title">信使</h3>
           <div class="muted">这里管理 WhatsApp / 钉钉多实例机器人，包括创建、启动、停止、配对和日志查看。</div>
         </div>
 
@@ -721,6 +721,10 @@
   <div id="toast"></div>
 
 <script>
+// ---------------------------------------------------------------------------
+// Shared state and base UI helpers
+// ---------------------------------------------------------------------------
+
 const state = {
   me: null,
   items: [],
@@ -749,6 +753,10 @@ function setButtonLoading(btn, loading) {
   btn.disabled = !!loading;
   btn.classList.toggle('loading', !!loading);
 }
+
+// ---------------------------------------------------------------------------
+// Workspace navigation
+// ---------------------------------------------------------------------------
 
 function switchWorkspace(next) {
   state.workspace = ['trader', 'bothub', 'list'].includes(next) ? next : 'list';
@@ -816,6 +824,18 @@ function traderBrokerLabel(value) {
   })[value] || value || '-';
 }
 
+// ---------------------------------------------------------------------------
+// Trader workspace: records, config, and summary rendering
+// ---------------------------------------------------------------------------
+
+function getTraderLatestState(data) {
+  return data?.state?.strategies ? Object.values(data.state.strategies)[0] : null;
+}
+
+function getTraderStrategyConfig(data) {
+  return data?.strategies?.[0] || {};
+}
+
 function buildTraderRecordList(data) {
   const signals = (data?.recent_signals || []).map((item, idx) => ({
     id: `signal-${idx}-${item.ts || ''}`,
@@ -868,6 +888,17 @@ function renderTraderRecordList(records) {
 function filterTraderRecords(records) {
   if (state.traderRecordFilter === 'all') return records;
   return records.filter(record => record.kind === state.traderRecordFilter);
+}
+
+function getFilteredTraderRecords(data) {
+  return filterTraderRecords(buildTraderRecordList(data));
+}
+
+function syncTraderSelectedRecord(records) {
+  if (!records.some(record => record.id === state.traderSelectedRecordId)) {
+    state.traderSelectedRecordId = records[0]?.id || null;
+  }
+  return records.find(record => record.id === state.traderSelectedRecordId) || null;
 }
 
 function pickLatestTraderRecord(allRecords, latest) {
@@ -1036,6 +1067,78 @@ function renderTraderRecordMeta(records, selectedRecord) {
       hintEl.textContent = `${selectedRecord.kind === 'signal' ? '信号' : '订单'} · ${shortTime(selectedRecord.ts)} · ${selectedRecord.title}`;
     }
   }
+}
+
+function bindTraderRecordSelection() {
+  document.querySelectorAll('[data-record-id]').forEach(el => {
+    el.onclick = () => {
+      state.traderSelectedRecordId = el.dataset.recordId;
+      renderTraderSummary();
+    };
+  });
+}
+
+function renderTraderOverviewSection(data, latest, strategy) {
+  const latestPrice = latest?.latestPrice;
+  const preClose = latest?.preClose;
+  const latestPct = (typeof latestPrice === 'number' && typeof preClose === 'number' && preClose)
+    ? (((latestPrice - preClose) / preClose) * 100).toFixed(2) + '%'
+    : '-';
+  const availableText = data ? (data.available ? '可用' : '缺失') : '-';
+  const runningText = data ? (data.running ? `运行中（pid ${data.pid || '-'}）` : '已停止') : '-';
+  const healthHeadline = !data
+    ? '暂无交易机器人数据'
+    : data.running
+      ? '交易员运行中'
+      : '交易员当前未运行';
+  const healthSubline = !data
+    ? '请先检查服务和配置。'
+    : latest?.lastAction
+      ? `最近一次动作为 ${latest.lastAction}，可进入运行记录查看上下文。`
+      : '还没有执行记录，可以从工具栏触发一次运行。';
+
+  document.getElementById('robotListTraderStatus').textContent = data ? (data.running ? '运行中' : '已停止') : '-';
+  document.getElementById('robotListTraderBroker').textContent = traderBrokerLabel(data?.broker);
+  document.getElementById('robotListTraderAction').textContent = latest?.lastAction || '-';
+  document.getElementById('traderAvailable').textContent = availableText;
+  document.getElementById('traderRunning').textContent = runningText;
+  document.getElementById('traderBroker').textContent = traderBrokerLabel(data?.broker);
+  document.getElementById('traderRuntime').textContent = formatLocalPath(data?.runtime_dir);
+  document.getElementById('traderStrategyFile').textContent = formatLocalPath(data?.strategy_file);
+  document.getElementById('traderHealthHeadline').textContent = healthHeadline;
+  document.getElementById('traderHealthSubline').textContent = healthSubline;
+  document.getElementById('traderStatusTag').textContent = data ? (data.running ? '运行中' : '已停止') : '未加载';
+  document.getElementById('traderLatestStrategy').textContent = latest?.strategy
+    ? traderStrategyLabel(latest.strategy)
+    : (latest?.symbol || '-');
+  document.getElementById('traderLatestAction').textContent = latest?.lastAction || '-';
+  document.getElementById('traderLatestObservedAt').textContent = latest?.observedAt || '-';
+  document.getElementById('traderLatestReason').textContent = latest?.lastReason || '-';
+  document.getElementById('traderRecordSummary').textContent = latest?.observedAt
+    ? `最近记录时间 ${shortTime(latest.observedAt)}`
+    : '暂无最近记录';
+  document.getElementById('traderConfigSummary').textContent = strategy?.symbol
+    ? `${strategy.symbol} / ${traderStrategyLabel(strategy.strategy)} / ${strategy.dry_run ? '模拟运行' : '实盘'}`
+    : '暂无策略配置';
+  document.getElementById('traderLatestSymbol').textContent = latest?.symbol || '-';
+  document.getElementById('traderLatestPrice').textContent = typeof latestPrice === 'number' ? String(latestPrice) : '-';
+  document.getElementById('traderLatestChangePct').textContent = latestPct;
+  document.getElementById('traderLatestRisk').textContent = latest?.riskOk ? '通过' : (latest ? '拦截' : '-');
+}
+
+function renderTraderRecordsSection(data) {
+  const records = getFilteredTraderRecords(data);
+  const selectedRecord = syncTraderSelectedRecord(records);
+  document.getElementById('traderRecordFocus').innerHTML = renderTraderRecordFocus(selectedRecord);
+  document.getElementById('traderRecordList').innerHTML = renderTraderRecordList(records);
+  document.getElementById('traderRecordDetail').innerHTML = renderTraderRecordDetail(selectedRecord);
+  renderTraderRecordMeta(records, selectedRecord);
+  bindTraderRecordSelection();
+}
+
+function renderTraderDiagnostics(data) {
+  document.getElementById('traderState').textContent = data ? JSON.stringify(data.state || {}, null, 2) : '暂无数据';
+  document.getElementById('traderLogs').textContent = data?.service_log_tail || '暂无数据';
 }
 
 function shortWallet(v) {
@@ -1292,77 +1395,16 @@ async function loadTraderSummary() {
 
 function renderTraderSummary() {
   const data = state.trader;
-  const latest = data?.state?.strategies ? Object.values(data.state.strategies)[0] : null;
-  const strategy = data?.strategies?.[0] || {};
-  const latestPrice = latest?.latestPrice;
-  const preClose = latest?.preClose;
-  const latestPct = (typeof latestPrice === 'number' && typeof preClose === 'number' && preClose)
-    ? (((latestPrice - preClose) / preClose) * 100).toFixed(2) + '%'
-    : '-';
-  const availableText = data ? (data.available ? '可用' : '缺失') : '-';
-  const runningText = data ? (data.running ? `运行中（pid ${data.pid || '-'}）` : '已停止') : '-';
-  const healthHeadline = !data
-    ? '暂无交易机器人数据'
-    : data.running
-      ? '交易员运行中'
-      : '交易员当前未运行';
-  const healthSubline = !data
-    ? '请先检查服务和配置。'
-    : latest?.lastAction
-      ? `最近一次动作为 ${latest.lastAction}，可进入运行记录查看上下文。`
-      : '还没有执行记录，可以从工具栏触发一次运行。';
-  document.getElementById('robotListTraderStatus').textContent = data ? (data.running ? '运行中' : '已停止') : '-';
-  document.getElementById('robotListTraderBroker').textContent = traderBrokerLabel(data?.broker);
-  document.getElementById('robotListTraderAction').textContent = latest?.lastAction || '-';
-  document.getElementById('traderAvailable').textContent = availableText;
-  document.getElementById('traderRunning').textContent = runningText;
-  document.getElementById('traderBroker').textContent = traderBrokerLabel(data?.broker);
-  document.getElementById('traderRuntime').textContent = formatLocalPath(data?.runtime_dir);
-  document.getElementById('traderStrategyFile').textContent = formatLocalPath(data?.strategy_file);
-  document.getElementById('traderHealthHeadline').textContent = healthHeadline;
-  document.getElementById('traderHealthSubline').textContent = healthSubline;
-  document.getElementById('traderStatusTag').textContent = data ? (data.running ? '运行中' : '已停止') : '未加载';
-  document.getElementById('traderLatestStrategy').textContent = latest?.strategy
-    ? traderStrategyLabel(latest.strategy)
-    : (latest?.symbol || '-');
-  document.getElementById('traderLatestAction').textContent = latest?.lastAction || '-';
-  document.getElementById('traderLatestObservedAt').textContent = latest?.observedAt || '-';
-  document.getElementById('traderLatestReason').textContent = latest?.lastReason || '-';
-  document.getElementById('traderRecordSummary').textContent = latest?.observedAt
-    ? `最近记录时间 ${shortTime(latest.observedAt)}`
-    : '暂无最近记录';
-  document.getElementById('traderConfigSummary').textContent = strategy?.symbol
-    ? `${strategy.symbol} / ${traderStrategyLabel(strategy.strategy)} / ${strategy.dry_run ? '模拟运行' : '实盘'}`
-    : '暂无策略配置';
-  if (document.getElementById('traderLatestSymbol')) {
-    document.getElementById('traderLatestSymbol').textContent = latest?.symbol || '-';
-    document.getElementById('traderLatestPrice').textContent = typeof latestPrice === 'number' ? String(latestPrice) : '-';
-    document.getElementById('traderLatestChangePct').textContent = latestPct;
-    document.getElementById('traderLatestRisk').textContent = latest?.riskOk ? '通过' : (latest ? '拦截' : '-');
-  }
-  const allRecords = buildTraderRecordList(data);
-  const records = filterTraderRecords(allRecords);
-  if (!records.some(record => record.id === state.traderSelectedRecordId)) {
-    state.traderSelectedRecordId = records[0]?.id || null;
-  }
-  const selectedRecord = records.find(record => record.id === state.traderSelectedRecordId) || null;
-  document.getElementById('traderState').textContent = data ? JSON.stringify(data.state || {}, null, 2) : '暂无数据';
-  document.getElementById('traderRecordFocus').innerHTML = renderTraderRecordFocus(selectedRecord);
-  document.getElementById('traderRecordList').innerHTML = renderTraderRecordList(records);
-  document.getElementById('traderRecordDetail').innerHTML = renderTraderRecordDetail(selectedRecord);
-  renderTraderRecordMeta(records, selectedRecord);
-  document.querySelectorAll('[data-record-id]').forEach(el => {
-    el.onclick = () => {
-      state.traderSelectedRecordId = el.dataset.recordId;
-      renderTraderSummary();
-    };
-  });
-  document.getElementById('traderLogs').textContent = data?.service_log_tail || '暂无数据';
+  const latest = getTraderLatestState(data);
+  const strategy = getTraderStrategyConfig(data);
+  renderTraderOverviewSection(data, latest, strategy);
+  renderTraderRecordsSection(data);
+  renderTraderDiagnostics(data);
   renderTraderConfigForm();
 }
 
 function renderTraderConfigForm() {
-  const strategy = state.trader?.strategies?.[0] || {};
+  const strategy = getTraderStrategyConfig(state.trader);
   document.getElementById('traderCfgId').value = strategy.id || 'etf-breakout-demo';
   document.getElementById('traderCfgName').value = strategy.name || '';
   document.getElementById('traderCfgSymbol').value = strategy.symbol || '';
@@ -1416,6 +1458,10 @@ function buildTraderConfigPayload() {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Bot Hub workspace rendering
+// ---------------------------------------------------------------------------
 
 function renderInstances() {
   const body = document.getElementById('instancesBody');
@@ -1561,6 +1607,10 @@ function syncTemplateByKind(force = false) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// API calls and auth/session flow
+// ---------------------------------------------------------------------------
+
 async function createInstance() {
   const payload = {
     kind: document.getElementById('fKind').value,
@@ -1648,13 +1698,19 @@ async function logout() {
   await bootstrap();
 }
 
-function bindEvents() {
-  bindFoldPanels();
+// ---------------------------------------------------------------------------
+// Event binding
+// ---------------------------------------------------------------------------
+
+function bindWorkspaceEvents() {
   document.getElementById('btnOpenTrader').onclick = () => switchWorkspace('trader');
   document.getElementById('btnOpenBotHub').onclick = () => switchWorkspace('bothub');
   document.getElementById('btnBreadcrumbRobotList').onclick = () => switchWorkspace('list');
   document.getElementById('btnBackFromTrader').onclick = () => switchWorkspace('list');
   document.getElementById('btnBackFromBotHub').onclick = () => switchWorkspace('list');
+}
+
+function bindTraderEvents() {
   document.getElementById('btnTraderOpenRecords').onclick = () => switchTraderDetailSection('records');
   document.getElementById('btnTraderOpenConfig').onclick = () => switchTraderDetailSection('config');
   document.getElementById('btnTraderInspectLatest').onclick = () => openLatestTraderRecord();
@@ -1673,53 +1729,6 @@ function bindEvents() {
   document.getElementById('tabTraderOverview').onclick = () => switchTraderDetailSection('overview');
   document.getElementById('tabTraderConfig').onclick = () => switchTraderDetailSection('config');
   document.getElementById('tabTraderRecords').onclick = () => switchTraderDetailSection('records');
-
-  document.getElementById('btnLogin').onclick = async () => {
-    try {
-      await walletLogin();
-      await bootstrap();
-    } catch (e) {
-      toast(`登录失败: ${e.message}`, 3000);
-    }
-  };
-
-  document.getElementById('btnLogout').onclick = async () => {
-    try { await logout(); } catch (e) { toast(e.message); }
-  };
-
-  document.getElementById('btnCopyWallet').onclick = async () => {
-    if (!state.me?.wallet_id) return;
-    try {
-      await navigator.clipboard.writeText(state.me.wallet_id);
-      toast('地址已复制');
-    } catch (_) {
-      toast('复制失败');
-    }
-  };
-
-  document.getElementById('btnCreate').onclick = async () => {
-    try { await createInstance(); }
-    catch (e) { toast(`创建失败: ${e.message}`, 3000); }
-  };
-
-  document.getElementById('fKind').onchange = () => syncTemplateByKind(true);
-  syncTemplateByKind(true);
-
-  document.getElementById('btnRefresh').onclick = async () => {
-    try { await loadInstances(); }
-    catch (e) { toast(`刷新失败: ${e.message}`); }
-  };
-
-  document.getElementById('btnSetGlobalModel').onclick = async () => {
-    try { await setGlobalModel(); }
-    catch (e) { toast(`更新失败: ${e.message}`); }
-  };
-
-  document.getElementById('btnLoadModels').onclick = async () => {
-    try { await loadRouterModels(); toast('模型列表已刷新'); }
-    catch (e) { toast(`读取失败: ${e.message}`); }
-  };
-
   document.getElementById('btnTraderRunOnce').onclick = async () => {
     const btn = document.getElementById('btnTraderRunOnce');
     try {
@@ -1764,12 +1773,78 @@ function bindEvents() {
       toast(`保存并执行失败: ${e.message}`, 3000);
     }
   };
+}
+
+function bindBotHubEvents() {
+  document.getElementById('btnCreate').onclick = async () => {
+    try { await createInstance(); }
+    catch (e) { toast(`创建失败: ${e.message}`, 3000); }
+  };
+
+  document.getElementById('fKind').onchange = () => syncTemplateByKind(true);
+  syncTemplateByKind(true);
+
+  document.getElementById('btnRefresh').onclick = async () => {
+    try { await loadInstances(); }
+    catch (e) { toast(`刷新失败: ${e.message}`); }
+  };
+
+  document.getElementById('btnSetGlobalModel').onclick = async () => {
+    try { await setGlobalModel(); }
+    catch (e) { toast(`更新失败: ${e.message}`); }
+  };
+
+  document.getElementById('btnLoadModels').onclick = async () => {
+    try { await loadRouterModels(); toast('模型列表已刷新'); }
+    catch (e) { toast(`读取失败: ${e.message}`); }
+  };
+}
+
+function bindAuthEvents() {
+  document.getElementById('btnLogin').onclick = async () => {
+    try {
+      await walletLogin();
+      await bootstrap();
+    } catch (e) {
+      toast(`登录失败: ${e.message}`, 3000);
+    }
+  };
+
+  document.getElementById('btnLogout').onclick = async () => {
+    try { await logout(); } catch (e) { toast(e.message); }
+  };
+
+  document.getElementById('btnCopyWallet').onclick = async () => {
+    if (!state.me?.wallet_id) return;
+    try {
+      await navigator.clipboard.writeText(state.me.wallet_id);
+      toast('地址已复制');
+    } catch (_) {
+      toast('复制失败');
+    }
+  };
+}
+
+function bindSharedEvents() {
+  bindFoldPanels();
 
   document.getElementById('fProviderCreate').onchange = () => loadRouterModels().catch(() => {});
   document.getElementById('fProviderGlobal').onchange = () => loadRouterModels().catch(() => {});
   document.getElementById('fSupplierCreate').onchange = () => applyModelFilters();
   document.getElementById('fSupplierGlobal').onchange = () => applyModelFilters();
 }
+
+function bindEvents() {
+  bindWorkspaceEvents();
+  bindTraderEvents();
+  bindBotHubEvents();
+  bindAuthEvents();
+  bindSharedEvents();
+}
+
+// ---------------------------------------------------------------------------
+// App bootstrap
+// ---------------------------------------------------------------------------
 
 async function bootstrap() {
   renderWalletHistory();
