@@ -31,6 +31,26 @@
     button.secondary { background: #eef2f7; color: #1f2937; border: 1px solid var(--line); }
     button.warn { background: #f59e0b; }
     button.stop { background: #ef4444; }
+    .segmented { display:inline-flex; padding:4px; background:#e9eff7; border:1px solid var(--line); border-radius:12px; gap:4px; }
+    .segmented button { background: transparent; color: var(--sub); border: none; min-height: 34px; padding: 7px 12px; font-weight: 700; }
+    .segmented button.active { background: #fff; color: var(--txt); box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+    .band { background: linear-gradient(180deg,#ffffff,#f7fbff); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px; }
+    .panel-title { margin-bottom:8px; }
+    .stack { display:grid; gap:10px; }
+    .wide-grid { display:grid; grid-template-columns: 1.2fr .8fr; gap:10px; }
+    .surface { background:#f8fbff; border:1px solid var(--line); border-radius:10px; padding:12px; }
+    .robot-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
+    .robot-tile { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; display:grid; gap:10px; }
+    .robot-tile h3 { font-size:18px; }
+    .robot-meta { display:grid; gap:8px; }
+    .robot-meta .muted { margin:0; }
+    .detail-head { display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap; }
+    .detail-nav { display:flex; gap:8px; flex-wrap:wrap; }
+    .detail-nav button { background:#eef2f7; color:#475569; border:1px solid var(--line); }
+    .detail-nav button.active { background:#0b66ff; color:#fff; border-color:#0b66ff; }
+    .record-table { width:100%; border-collapse: collapse; font-size:13px; }
+    .record-table th, .record-table td { border-bottom:1px solid var(--line); padding:8px 6px; text-align:left; vertical-align:top; }
+    .record-table th { background:#f8fbff; color:var(--sub); font-weight:700; }
     button.loading { position: relative; pointer-events: none; color: transparent !important; }
     button.loading::after {
       content: "";
@@ -71,7 +91,7 @@
     .tag.pair-idle { background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
     #toast { position: fixed; right: 16px; bottom: 16px; background: #111827; color: #fff; padding: 10px 14px; border-radius: 9px; opacity: 0; transform: translateY(8px); transition: all .2s; pointer-events: none; }
     #toast.show { opacity: 1; transform: translateY(0); }
-    @media (max-width: 900px) { .grid2, .kv { grid-template-columns: 1fr; } .wrap { padding: 10px; } }
+    @media (max-width: 900px) { .grid2, .kv, .wide-grid, .robot-grid { grid-template-columns: 1fr; } .wrap { padding: 10px; } }
   </style>
 </head>
 <body>
@@ -80,13 +100,13 @@
       <div class="row">
         <div class="logo">BH</div>
         <div>
-          <h1>Bot Hub 控制台</h1>
-          <p>钱包登录后，创建并独立管理多个 WhatsApp / 钉钉机器人实例</p>
+          <h1>Robot 控制台</h1>
+          <p>登录后进入交易机器人工作台，Bot Hub 的多实例能力保留在次级页面</p>
         </div>
       </div>
       <div class="card" style="margin-top:12px;">
         <div class="between">
-          <div class="muted">先连接钱包才能进入控制台。若钱包支持 UCAN 扩展方法将自动绑定。</div>
+          <div class="muted">先连接钱包才能进入控制台。当前默认工作区是 Trader，其他 Bot Hub 能力会收纳到次级视图。</div>
           <button id="btnLogin">连接钱包并登录</button>
         </div>
       </div>
@@ -101,8 +121,8 @@
         <div class="row">
           <div class="logo">BH</div>
           <div>
-            <h2>Bot Hub 控制台</h2>
-            <p>统一配置模型，独立启动实例，互不影响</p>
+            <h2>Robot 控制台</h2>
+            <p>默认聚焦 Trader；Bot Hub 的 WhatsApp / 钉钉实例管理保留在次级工作区</p>
           </div>
         </div>
         <div class="row">
@@ -113,171 +133,161 @@
         </div>
       </div>
 
-      <div class="grid2">
-        <div class="card">
-          <h3 style="margin-bottom:8px;">创建实例</h3>
-          <div class="grid2">
-            <div>
-              <div class="muted">名称</div>
-              <input id="fName" placeholder="wa-ecom-fr-01" />
-            </div>
-            <div>
-              <div class="muted">类型</div>
-              <select id="fKind">
-                <option value="whatsapp">WhatsApp</option>
-                <option value="dingtalk">DingTalk</option>
-              </select>
-            </div>
-            <div>
-              <div class="muted">模板</div>
-              <select id="fTemplate">
-                <option value="ecommerce-toy">ecommerce-toy（跨境玩具卖家）</option>
-                <option value="generic">generic（通用）</option>
-              </select>
-            </div>
-            <div>
-              <div class="muted">渠道</div>
-              <select id="fProviderCreate">
-                <option value="router">Router</option>
-              </select>
-            </div>
-            <div>
-              <div class="muted">供应商</div>
-              <select id="fSupplierCreate">
-                <option value="">全部</option>
-                <option value="openai">OpenAI</option>
-                <option value="baidu">Baidu</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="deepseek">DeepSeek</option>
-                <option value="google">Google</option>
-                <option value="tencenthunyuan">TencentHunyuan</option>
-                <option value="minimax">MiniMax</option>
-                <option value="xai">xAI</option>
-                <option value="qwen">Qwen</option>
-                <option value="mistral">Mistral</option>
-              </select>
-            </div>
-            <div>
-              <div class="muted">模型</div>
-              <select id="fModel">
-                <option value="gpt-5.3-codex">gpt-5.3-codex</option>
-              </select>
-            </div>
-            <div>
-              <div class="muted">DingTalk Client ID（仅钉钉）</div>
-              <input id="fDdId" placeholder="可留空（非钉钉）" />
-            </div>
-            <div>
-              <div class="muted">DingTalk Client Secret（仅钉钉）</div>
-              <input id="fDdSecret" placeholder="可留空（非钉钉）" />
-            </div>
-          </div>
-          <div class="row" style="margin-top:10px;">
-            <button id="btnCreate">创建</button>
-            <button class="secondary" id="btnRefresh">刷新</button>
-          </div>
+      <div id="robotListView" class="stack">
+        <div class="band">
+          <h3 class="panel-title">机器人列表</h3>
+          <div class="muted">先选择一个机器人，再进入该机器人的运行状态、配置和日志。</div>
         </div>
 
-        <div class="card">
-          <h3 style="margin-bottom:8px;">全局模型（Admin）</h3>
-          <div class="grid2">
-            <div>
-              <div class="muted">渠道</div>
-              <select id="fProviderGlobal">
-                <option value="router">Router</option>
-              </select>
+        <div class="robot-grid">
+          <div class="robot-tile">
+            <div class="row">
+              <div class="logo">TR</div>
+              <div>
+                <h3>Trader</h3>
+                <div class="muted">交易策略机器人</div>
+              </div>
             </div>
-            <div>
-              <div class="muted">供应商</div>
-              <select id="fSupplierGlobal">
-                <option value="">全部</option>
-                <option value="openai">OpenAI</option>
-                <option value="baidu">Baidu</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="deepseek">DeepSeek</option>
-                <option value="google">Google</option>
-                <option value="tencenthunyuan">TencentHunyuan</option>
-                <option value="minimax">MiniMax</option>
-                <option value="xai">xAI</option>
-                <option value="qwen">Qwen</option>
-                <option value="mistral">Mistral</option>
-              </select>
+            <div class="robot-meta">
+              <div class="muted">运行状态：<span id="robotListTraderStatus">-</span></div>
+              <div class="muted">Broker：<span id="robotListTraderBroker">-</span></div>
+              <div class="muted">最新动作：<span id="robotListTraderAction">-</span></div>
             </div>
-            <div>
-              <div class="muted">默认模型</div>
-              <select id="fGlobalModel">
-                <option value="gpt-5.3-codex">gpt-5.3-codex</option>
-              </select>
-            </div>
-            <div>
-              <div class="muted">Admin Token</div>
-              <input id="fAdminToken" placeholder="x-admin-token" />
+            <div class="row">
+              <button id="btnOpenTrader">进入 Trader</button>
             </div>
           </div>
-          <div class="row" style="margin-top:10px;">
-            <button id="btnSetGlobalModel">更新全局模型</button>
-            <button class="secondary" id="btnLoadModels">刷新模型列表</button>
+
+          <div class="robot-tile">
+            <div class="row">
+              <div class="logo">BH</div>
+              <div>
+                <h3>Bot Hub</h3>
+                <div class="muted">多实例消息机器人管理</div>
+              </div>
+            </div>
+            <div class="robot-meta">
+              <div class="muted">实例数量：<span id="robotListBotCount">-</span></div>
+              <div class="muted">运行中：<span id="robotListBotRunning">-</span></div>
+              <div class="muted">能力：WhatsApp / DingTalk</div>
+            </div>
+            <div class="row">
+              <button id="btnOpenBotHub">进入 Bot Hub</button>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="between">
-          <h3>实例列表</h3>
-          <div class="muted">点击按钮可启动/停止/配对/查看日志/删除</div>
-        </div>
-        <div style="overflow:auto;">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>类型</th>
-                <th>模型</th>
-                <th>端口</th>
-                <th>状态</th>
-                <th>动作</th>
-              </tr>
-            </thead>
-            <tbody id="instancesBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="between">
-          <h3>Trader 监控</h3>
-          <div class="row">
-            <div class="muted">策略机器人运行状态、最近信号与最小操作闭环</div>
-            <button class="secondary" id="btnTraderRunOnce">Run Once</button>
-            <button class="secondary" id="btnTraderStart">Start</button>
-            <button class="secondary" id="btnTraderStop">Stop</button>
-          </div>
-        </div>
-        <div class="kv" style="margin-top:10px;">
-          <div class="item">
-            <div class="label">可用性</div>
-            <div id="traderAvailable" class="value">-</div>
-          </div>
-          <div class="item">
-            <div class="label">运行状态</div>
-            <div id="traderRunning" class="value">-</div>
-          </div>
-          <div class="item">
-            <div class="label">Broker</div>
-            <div id="traderBroker" class="value">-</div>
-          </div>
-          <div class="item">
-            <div class="label">Runtime</div>
-            <div id="traderRuntime" class="value">-</div>
-          </div>
-          <div class="item">
-            <div class="label">Strategy File</div>
-            <div id="traderStrategyFile" class="value">-</div>
-          </div>
-        </div>
-        <div class="grid2" style="margin-top:10px;">
+      <div id="traderWorkspace" class="stack hidden">
+        <div class="band detail-head">
           <div>
-            <div class="muted" style="margin-bottom:8px;">策略配置</div>
+            <div class="muted">机器人详情</div>
+            <h3 class="panel-title">Trader</h3>
+            <div class="muted">交易策略机器人详情、配置和执行控制</div>
+          </div>
+          <div class="row">
+            <div class="detail-nav">
+              <button id="tabTraderOverview" class="active" type="button">概览</button>
+              <button id="tabTraderConfig" type="button">配置</button>
+              <button id="tabTraderRecords" type="button">运行记录</button>
+            </div>
+            <button class="secondary" id="btnBackFromTrader" type="button">返回机器人列表</button>
+          </div>
+        </div>
+
+        <div id="traderOverviewSection" class="stack">
+        <div class="wide-grid">
+          <div class="band">
+            <div class="between">
+              <div>
+                <h3 class="panel-title">Trader 工作台</h3>
+                <div class="muted">围绕一次策略执行的结果查看、配置保存和单次触发做最小闭环</div>
+              </div>
+              <div class="row">
+                <button class="secondary" id="btnTraderRunOnce">Run Once</button>
+                <button class="secondary" id="btnTraderStart">Start</button>
+                <button class="secondary" id="btnTraderStop">Stop</button>
+              </div>
+            </div>
+            <div class="kv" style="margin-top:10px;">
+              <div class="item">
+                <div class="label">可用性</div>
+                <div id="traderAvailable" class="value">-</div>
+              </div>
+              <div class="item">
+                <div class="label">运行状态</div>
+                <div id="traderRunning" class="value">-</div>
+              </div>
+              <div class="item">
+                <div class="label">Broker</div>
+                <div id="traderBroker" class="value">-</div>
+              </div>
+              <div class="item">
+                <div class="label">Runtime</div>
+                <div id="traderRuntime" class="value">-</div>
+              </div>
+              <div class="item">
+                <div class="label">Strategy File</div>
+                <div id="traderStrategyFile" class="value">-</div>
+              </div>
+            </div>
+          </div>
+          <div class="band">
+            <h3 class="panel-title">最近一次结果</h3>
+            <div class="stack">
+              <div class="surface">
+                <div class="muted">策略</div>
+                <div id="traderLatestStrategy" style="font-weight:700;">-</div>
+              </div>
+              <div class="surface">
+                <div class="muted">标的</div>
+                <div id="traderLatestSymbol" style="font-weight:700;">-</div>
+              </div>
+              <div class="surface">
+                <div class="muted">动作</div>
+                <div id="traderLatestAction" style="font-weight:700;">-</div>
+              </div>
+              <div class="surface">
+                <div class="muted">最新价 / 涨跌幅</div>
+                <div style="font-weight:700;"><span id="traderLatestPrice">-</span> / <span id="traderLatestChangePct">-</span></div>
+              </div>
+              <div class="surface">
+                <div class="muted">风控</div>
+                <div id="traderLatestRisk" style="font-weight:700;">-</div>
+              </div>
+              <div class="surface">
+                <div class="muted">时间</div>
+                <div id="traderLatestObservedAt" style="font-weight:700;">-</div>
+              </div>
+              <div class="surface">
+                <div class="muted">说明</div>
+                <div id="traderLatestReason" style="font-weight:700; overflow-wrap:anywhere;">-</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="band">
+            <div class="muted" style="margin-bottom:8px;">策略状态</div>
+            <pre id="traderState">暂无数据</pre>
+          </div>
+          <div class="band">
+            <div class="muted" style="margin-bottom:8px;">服务日志</div>
+            <pre id="traderLogs">暂无数据</pre>
+          </div>
+        </div>
+        </div>
+
+        <div id="traderConfigSection" class="band hidden">
+          <div class="between">
+            <h3 class="panel-title">策略配置</h3>
+            <div class="row">
+              <button class="secondary" id="btnTraderSave">保存配置</button>
+              <button class="secondary" id="btnTraderSaveAndRun">保存并执行一次</button>
+            </div>
+          </div>
+          <div class="grid2" style="margin-top:10px;">
             <div class="grid2">
               <div>
                 <div class="muted">Strategy ID</div>
@@ -383,47 +393,184 @@
                 </select>
               </div>
             </div>
-            <div class="row" style="margin-top:10px;">
-              <button class="secondary" id="btnTraderSave">保存配置</button>
-              <button class="secondary" id="btnTraderSaveAndRun">保存并执行一次</button>
-            </div>
           </div>
-          <div>
-            <div class="muted" style="margin-bottom:8px;">策略状态</div>
-            <pre id="traderState">暂无数据</pre>
-          </div>
-          <div>
+        </div>
+
+        <div id="traderRecordsSection" class="grid2 hidden">
+          <div class="band">
             <div class="muted" style="margin-bottom:8px;">最近信号</div>
-            <pre id="traderSignals">暂无数据</pre>
+            <div id="traderSignals">暂无数据</div>
           </div>
-          <div>
+          <div class="band">
             <div class="muted" style="margin-bottom:8px;">最近订单</div>
-            <pre id="traderOrders">暂无数据</pre>
-          </div>
-          <div>
-            <div class="muted" style="margin-bottom:8px;">服务日志</div>
-            <pre id="traderLogs">暂无数据</pre>
+            <div id="traderOrders">暂无数据</div>
           </div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="between">
-          <h3>日志与配对</h3>
-          <div id="logTitle" class="muted">未选择实例</div>
-        </div>
-        <div class="grid2" style="margin-top:8px;">
+      <div id="botHubWorkspace" class="stack hidden">
+        <div class="band detail-head">
           <div>
-            <div class="between" style="margin-bottom:8px;">
-              <div class="muted">WhatsApp 配对二维码（白底黑字可扫码）</div>
-              <span id="pairStatus" class="tag pair-idle">未配对</span>
-            </div>
-            <pre id="pairQr">暂无可扫码二维码。请先点击实例“配对”。</pre>
-            <div id="pairHint" class="muted" style="margin-top:8px;">点击“配对”后，二维码会在这里实时刷新。</div>
+            <div class="muted">机器人详情</div>
+            <h3 class="panel-title">Bot Hub</h3>
+            <div class="muted">WhatsApp / 钉钉多实例机器人管理</div>
           </div>
-          <div>
-            <div class="muted" style="margin-bottom:8px;">运行日志</div>
-            <pre id="logs">暂无日志</pre>
+          <button class="secondary" id="btnBackFromBotHub" type="button">返回机器人列表</button>
+        </div>
+
+        <div class="band">
+          <h3 class="panel-title">Bot Hub 管理</h3>
+          <div class="muted">这里管理 WhatsApp / 钉钉多实例机器人，包括创建、启动、停止、配对和日志查看。</div>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <h3 style="margin-bottom:8px;">创建实例</h3>
+            <div class="grid2">
+              <div>
+                <div class="muted">名称</div>
+                <input id="fName" placeholder="wa-ecom-fr-01" />
+              </div>
+              <div>
+                <div class="muted">类型</div>
+                <select id="fKind">
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="dingtalk">DingTalk</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">模板</div>
+                <select id="fTemplate">
+                  <option value="ecommerce-toy">ecommerce-toy（跨境玩具卖家）</option>
+                  <option value="generic">generic（通用）</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">渠道</div>
+                <select id="fProviderCreate">
+                  <option value="router">Router</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">供应商</div>
+                <select id="fSupplierCreate">
+                  <option value="">全部</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="baidu">Baidu</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="google">Google</option>
+                  <option value="tencenthunyuan">TencentHunyuan</option>
+                  <option value="minimax">MiniMax</option>
+                  <option value="xai">xAI</option>
+                  <option value="qwen">Qwen</option>
+                  <option value="mistral">Mistral</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">模型</div>
+                <select id="fModel">
+                  <option value="gpt-5.3-codex">gpt-5.3-codex</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">DingTalk Client ID（仅钉钉）</div>
+                <input id="fDdId" placeholder="可留空（非钉钉）" />
+              </div>
+              <div>
+                <div class="muted">DingTalk Client Secret（仅钉钉）</div>
+                <input id="fDdSecret" placeholder="可留空（非钉钉）" />
+              </div>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button id="btnCreate">创建</button>
+              <button class="secondary" id="btnRefresh">刷新</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom:8px;">全局模型（Admin）</h3>
+            <div class="grid2">
+              <div>
+                <div class="muted">渠道</div>
+                <select id="fProviderGlobal">
+                  <option value="router">Router</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">供应商</div>
+                <select id="fSupplierGlobal">
+                  <option value="">全部</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="baidu">Baidu</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="google">Google</option>
+                  <option value="tencenthunyuan">TencentHunyuan</option>
+                  <option value="minimax">MiniMax</option>
+                  <option value="xai">xAI</option>
+                  <option value="qwen">Qwen</option>
+                  <option value="mistral">Mistral</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">默认模型</div>
+                <select id="fGlobalModel">
+                  <option value="gpt-5.3-codex">gpt-5.3-codex</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">Admin Token</div>
+                <input id="fAdminToken" placeholder="x-admin-token" />
+              </div>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button id="btnSetGlobalModel">更新全局模型</button>
+              <button class="secondary" id="btnLoadModels">刷新模型列表</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="between">
+            <h3>实例列表</h3>
+            <div class="muted">点击按钮可启动/停止/配对/查看日志/删除</div>
+          </div>
+          <div style="overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>类型</th>
+                  <th>模型</th>
+                  <th>端口</th>
+                  <th>状态</th>
+                  <th>动作</th>
+                </tr>
+              </thead>
+              <tbody id="instancesBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="between">
+            <h3>日志与配对</h3>
+            <div id="logTitle" class="muted">未选择实例</div>
+          </div>
+          <div class="grid2" style="margin-top:8px;">
+            <div>
+              <div class="between" style="margin-bottom:8px;">
+                <div class="muted">WhatsApp 配对二维码（白底黑字可扫码）</div>
+                <span id="pairStatus" class="tag pair-idle">未配对</span>
+              </div>
+              <pre id="pairQr">暂无可扫码二维码。请先点击实例“配对”。</pre>
+              <div id="pairHint" class="muted" style="margin-top:8px;">点击“配对”后，二维码会在这里实时刷新。</div>
+            </div>
+            <div>
+              <div class="muted" style="margin-bottom:8px;">运行日志</div>
+              <pre id="logs">暂无日志</pre>
+            </div>
           </div>
         </div>
       </div>
@@ -437,6 +584,8 @@ const state = {
   me: null,
   items: [],
   trader: null,
+  workspace: 'list',
+  traderDetailSection: 'overview',
   refreshTimer: null,
   authTimer: null,
   currentLogInstanceId: null,
@@ -458,6 +607,23 @@ function setButtonLoading(btn, loading) {
   btn.classList.toggle('loading', !!loading);
 }
 
+function switchWorkspace(next) {
+  state.workspace = ['trader', 'bothub', 'list'].includes(next) ? next : 'list';
+  document.getElementById('robotListView').classList.toggle('hidden', state.workspace !== 'list');
+  document.getElementById('traderWorkspace').classList.toggle('hidden', state.workspace !== 'trader');
+  document.getElementById('botHubWorkspace').classList.toggle('hidden', state.workspace !== 'bothub');
+}
+
+function switchTraderDetailSection(next) {
+  state.traderDetailSection = ['overview', 'config', 'records'].includes(next) ? next : 'overview';
+  document.getElementById('traderOverviewSection').classList.toggle('hidden', state.traderDetailSection !== 'overview');
+  document.getElementById('traderConfigSection').classList.toggle('hidden', state.traderDetailSection !== 'config');
+  document.getElementById('traderRecordsSection').classList.toggle('hidden', state.traderDetailSection !== 'records');
+  document.getElementById('tabTraderOverview').classList.toggle('active', state.traderDetailSection === 'overview');
+  document.getElementById('tabTraderConfig').classList.toggle('active', state.traderDetailSection === 'config');
+  document.getElementById('tabTraderRecords').classList.toggle('active', state.traderDetailSection === 'records');
+}
+
 function formatLocalPath(value) {
   if (!value) return '-';
   const parts = String(value).split('/').filter(Boolean);
@@ -467,6 +633,80 @@ function formatLocalPath(value) {
   }
   if (parts.length <= 4) return String(value);
   return '.../' + parts.slice(-4).join('/');
+}
+
+function shortTime(value) {
+  if (!value) return '-';
+  const text = String(value);
+  const parts = text.split('T');
+  if (parts.length < 2) return text;
+  return parts[0] + ' ' + parts[1].slice(0, 8);
+}
+
+function renderSignalRows(items) {
+  if (!items || !items.length) {
+    return '<div class="muted">暂无信号记录</div>';
+  }
+  const rows = items.map(item => `
+    <tr>
+      <td>${shortTime(item.ts)}</td>
+      <td>${item.strategyId || '-'}</td>
+      <td>${item.symbol || '-'}</td>
+      <td>${item.action || '-'}</td>
+      <td>${item.latestPrice ?? '-'}</td>
+      <td>${item.riskOk ? '通过' : '拦截'}</td>
+      <td>${item.reason || '-'}</td>
+    </tr>
+  `).join('');
+  return `
+    <table class="record-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>策略</th>
+          <th>标的</th>
+          <th>动作</th>
+          <th>价格</th>
+          <th>风控</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderOrderRows(items) {
+  if (!items || !items.length) {
+    return '<div class="muted">暂无订单记录</div>';
+  }
+  const rows = items.map(item => `
+    <tr>
+      <td>${shortTime(item.ts)}</td>
+      <td>${item.strategyId || '-'}</td>
+      <td>${item.symbol || '-'}</td>
+      <td>${item.side || '-'}</td>
+      <td>${item.quantity ?? '-'}</td>
+      <td>${item.latestPrice ?? '-'}</td>
+      <td>${item.result?.mode || '-'}</td>
+    </tr>
+  `).join('');
+  return `
+    <table class="record-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>策略</th>
+          <th>标的</th>
+          <th>方向</th>
+          <th>数量</th>
+          <th>价格</th>
+          <th>模式</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function shortWallet(v) {
@@ -723,14 +963,33 @@ async function loadTraderSummary() {
 
 function renderTraderSummary() {
   const data = state.trader;
+  const latest = data?.state?.strategies ? Object.values(data.state.strategies)[0] : null;
+  const latestPrice = latest?.latestPrice;
+  const preClose = latest?.preClose;
+  const latestPct = (typeof latestPrice === 'number' && typeof preClose === 'number' && preClose)
+    ? (((latestPrice - preClose) / preClose) * 100).toFixed(2) + '%'
+    : '-';
+  document.getElementById('robotListTraderStatus').textContent = data ? (data.running ? '运行中' : '已停止') : '-';
+  document.getElementById('robotListTraderBroker').textContent = data?.broker || '-';
+  document.getElementById('robotListTraderAction').textContent = latest?.lastAction || '-';
   document.getElementById('traderAvailable').textContent = data ? (data.available ? 'available' : 'missing') : '-';
   document.getElementById('traderRunning').textContent = data ? (data.running ? `running (pid ${data.pid || '-'})` : 'stopped') : '-';
   document.getElementById('traderBroker').textContent = data?.broker || '-';
   document.getElementById('traderRuntime').textContent = formatLocalPath(data?.runtime_dir);
   document.getElementById('traderStrategyFile').textContent = formatLocalPath(data?.strategy_file);
+  document.getElementById('traderLatestStrategy').textContent = latest?.strategy || latest?.symbol || '-';
+  document.getElementById('traderLatestAction').textContent = latest?.lastAction || '-';
+  document.getElementById('traderLatestObservedAt').textContent = latest?.observedAt || '-';
+  document.getElementById('traderLatestReason').textContent = latest?.lastReason || '-';
+  if (document.getElementById('traderLatestSymbol')) {
+    document.getElementById('traderLatestSymbol').textContent = latest?.symbol || '-';
+    document.getElementById('traderLatestPrice').textContent = typeof latestPrice === 'number' ? String(latestPrice) : '-';
+    document.getElementById('traderLatestChangePct').textContent = latestPct;
+    document.getElementById('traderLatestRisk').textContent = latest?.riskOk ? '通过' : (latest ? '拦截' : '-');
+  }
   document.getElementById('traderState').textContent = data ? JSON.stringify(data.state || {}, null, 2) : '暂无数据';
-  document.getElementById('traderSignals').textContent = data ? JSON.stringify(data.recent_signals || [], null, 2) : '暂无数据';
-  document.getElementById('traderOrders').textContent = data ? JSON.stringify(data.recent_orders || [], null, 2) : '暂无数据';
+  document.getElementById('traderSignals').innerHTML = renderSignalRows(data?.recent_signals || []);
+  document.getElementById('traderOrders').innerHTML = renderOrderRows(data?.recent_orders || []);
   document.getElementById('traderLogs').textContent = data?.service_log_tail || '暂无数据';
   renderTraderConfigForm();
 }
@@ -794,6 +1053,9 @@ function buildTraderConfigPayload() {
 function renderInstances() {
   const body = document.getElementById('instancesBody');
   body.innerHTML = '';
+  const runningCount = (state.items || []).filter(inst => inst.status === 'running').length;
+  document.getElementById('robotListBotCount').textContent = String((state.items || []).length);
+  document.getElementById('robotListBotRunning').textContent = String(runningCount);
 
   if (!state.items.length) {
     body.innerHTML = '<tr><td colspan="6" class="muted">暂无实例</td></tr>';
@@ -1020,6 +1282,14 @@ async function logout() {
 }
 
 function bindEvents() {
+  document.getElementById('btnOpenTrader').onclick = () => switchWorkspace('trader');
+  document.getElementById('btnOpenBotHub').onclick = () => switchWorkspace('bothub');
+  document.getElementById('btnBackFromTrader').onclick = () => switchWorkspace('list');
+  document.getElementById('btnBackFromBotHub').onclick = () => switchWorkspace('list');
+  document.getElementById('tabTraderOverview').onclick = () => switchTraderDetailSection('overview');
+  document.getElementById('tabTraderConfig').onclick = () => switchTraderDetailSection('config');
+  document.getElementById('tabTraderRecords').onclick = () => switchTraderDetailSection('records');
+
   document.getElementById('btnLogin').onclick = async () => {
     try {
       await walletLogin();
@@ -1119,6 +1389,8 @@ function bindEvents() {
 
 async function bootstrap() {
   renderWalletHistory();
+  switchWorkspace('list');
+  switchTraderDetailSection('overview');
   const loggedIn = await checkAuth();
   if (!loggedIn) return;
 
