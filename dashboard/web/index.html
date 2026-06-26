@@ -458,6 +458,17 @@ function setButtonLoading(btn, loading) {
   btn.classList.toggle('loading', !!loading);
 }
 
+function formatLocalPath(value) {
+  if (!value) return '-';
+  const parts = String(value).split('/').filter(Boolean);
+  for (const marker of ['robots', 'dashboard', 'runtime', 'scripts']) {
+    const idx = parts.indexOf(marker);
+    if (idx >= 0) return parts.slice(idx).join('/');
+  }
+  if (parts.length <= 4) return String(value);
+  return '.../' + parts.slice(-4).join('/');
+}
+
 function shortWallet(v) {
   if (!v) return '-';
   if (v.length <= 12) return v;
@@ -715,8 +726,8 @@ function renderTraderSummary() {
   document.getElementById('traderAvailable').textContent = data ? (data.available ? 'available' : 'missing') : '-';
   document.getElementById('traderRunning').textContent = data ? (data.running ? `running (pid ${data.pid || '-'})` : 'stopped') : '-';
   document.getElementById('traderBroker').textContent = data?.broker || '-';
-  document.getElementById('traderRuntime').textContent = data?.runtime_dir || '-';
-  document.getElementById('traderStrategyFile').textContent = data?.strategy_file || '-';
+  document.getElementById('traderRuntime').textContent = formatLocalPath(data?.runtime_dir);
+  document.getElementById('traderStrategyFile').textContent = formatLocalPath(data?.strategy_file);
   document.getElementById('traderState').textContent = data ? JSON.stringify(data.state || {}, null, 2) : '暂无数据';
   document.getElementById('traderSignals').textContent = data ? JSON.stringify(data.recent_signals || [], null, 2) : '暂无数据';
   document.getElementById('traderOrders').textContent = data ? JSON.stringify(data.recent_orders || [], null, 2) : '暂无数据';

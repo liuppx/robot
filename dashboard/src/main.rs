@@ -625,7 +625,7 @@ fn trader_pid(runtime_dir: &FsPath) -> Option<u32> {
 fn is_process_running(pid: u32) -> bool {
     Command::new("bash")
         .arg("-lc")
-        .arg(format!("ps -p {pid} -o pid="))
+        .arg(format!("kill -0 {pid} >/dev/null 2>&1"))
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
