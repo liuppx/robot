@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from ..audit.logger import append_jsonl
@@ -19,6 +20,12 @@ from ..strategies.base import MarketSnapshot
 from ..strategies.auction_wave import AuctionWaveStrategy
 from ..strategies.breakout import BreakoutStrategy
 from .planner import build_order_intent
+
+
+def _snapshot_file(runtime_dir: Path, run_day: date, strategy_id: str, symbol: str) -> Path:
+    safe_strategy = strategy_id.replace("/", "_").replace(":", "_").replace(" ", "_")
+    safe_symbol = symbol.replace("/", "_").replace(":", "_").replace(" ", "_")
+    return runtime_dir / "snapshots" / run_day.isoformat() / f"{safe_strategy}__{safe_symbol}.jsonl"
 
 
 def _build_strategy(strategy_config: dict[str, Any]):
@@ -53,6 +60,21 @@ def run_cycle(
         logger.info("evaluating strategy=%s symbol=%s", strategy_config["id"], symbol)
         realtime_payload = ifind_client.query_realtime_quotes(symbol)
         history_payload = ifind_client.query_history_quotes(symbol, startdate=startdate, enddate=enddate)
+        snapshot_path = _snapshot_file(runtime_dir, today, strategy_config["id"], symbol)
+        append_jsonl(
+            snapshot_path,
+            {
+                "strategyId": strategy_config["id"],
+                "strategy": strategy_config.get("strategy", "breakout"),
+                "symbol": symbol,
+                "requestWindow": {
+                    "startdate": startdate,
+                    "enddate": enddate,
+                },
+                "realtimePayload": realtime_payload,
+                "historyPayload": history_payload,
+            },
+        )
         snapshot = MarketSnapshot(
             symbol=symbol,
             latest_price=extract_latest_price(realtime_payload),
@@ -115,6 +137,7 @@ def run_cycle(
             "observedAt": snapshot.observed_at.isoformat(timespec="seconds") if snapshot.observed_at else None,
             "riskOk": risk_ok,
             "riskReason": risk_reason,
+            "snapshotPath": str(snapshot_path),
             "strategyState": next_state,
             "metadata": signal.metadata,
             "orderResult": order_result,
