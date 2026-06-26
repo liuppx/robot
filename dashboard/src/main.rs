@@ -573,7 +573,7 @@ fn write_trader_config(
 }
 
 fn trader_root(cfg: &StaticConfig) -> PathBuf {
-    FsPath::new(&cfg.repo_root).join("robots/trader")
+    FsPath::new(&cfg.repo_root).join("robots/custom/trader")
 }
 
 fn trader_env_paths(root: &FsPath) -> (PathBuf, PathBuf) {

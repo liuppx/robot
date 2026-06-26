@@ -1,6 +1,6 @@
 # Trader
 
-`robots/trader` is a resident strategy-trading robot used to validate the full
+`robots/custom/trader` is a resident strategy-trading robot used to validate the full
 robot workflow:
 
 1. fetch TongHuaShun iFinD market data,
@@ -20,7 +20,7 @@ The first version is intentionally conservative:
 ## Layout
 
 ```text
-robots/trader/
+robots/custom/trader/
   config/
   docs/
   scripts/
@@ -30,7 +30,7 @@ robots/trader/
 ## Quick start
 
 ```bash
-cd robots/trader
+cd robots/custom/trader
 ./scripts/bootstrap.sh
 ./scripts/run_once.sh
 ./scripts/start_bot.sh
