@@ -51,6 +51,10 @@
     .hidden { display: none !important; }
     .muted { color: var(--sub); font-size: 13px; }
     .tag { display:inline-block; background:#eef6ff; color:#0b66ff; border:1px solid #cfe4ff; border-radius:999px; padding:2px 9px; font-size:12px; }
+    .kv { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+    .kv .item { background:#f8fbff; border:1px solid var(--line); border-radius:10px; padding:10px; min-width:0; }
+    .kv .item .label { color: var(--sub); font-size:12px; margin-bottom:4px; }
+    .kv .item .value { font-weight:700; overflow-wrap:anywhere; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { border-bottom: 1px solid var(--line); padding: 10px 6px; text-align: left; vertical-align: top; }
     th { background: #f8fbff; }
@@ -67,7 +71,7 @@
     .tag.pair-idle { background:#f1f5f9; color:#475569; border-color:#cbd5e1; }
     #toast { position: fixed; right: 16px; bottom: 16px; background: #111827; color: #fff; padding: 10px 14px; border-radius: 9px; opacity: 0; transform: translateY(8px); transition: all .2s; pointer-events: none; }
     #toast.show { opacity: 1; transform: translateY(0); }
-    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .wrap { padding: 10px; } }
+    @media (max-width: 900px) { .grid2, .kv { grid-template-columns: 1fr; } .wrap { padding: 10px; } }
   </style>
 </head>
 <body>
@@ -241,6 +245,134 @@
 
       <div class="card">
         <div class="between">
+          <h3>Trader 监控</h3>
+          <div class="row">
+            <div class="muted">策略机器人运行状态、最近信号与最小操作闭环</div>
+            <button class="secondary" id="btnTraderRunOnce">Run Once</button>
+            <button class="secondary" id="btnTraderStart">Start</button>
+            <button class="secondary" id="btnTraderStop">Stop</button>
+          </div>
+        </div>
+        <div class="kv" style="margin-top:10px;">
+          <div class="item">
+            <div class="label">可用性</div>
+            <div id="traderAvailable" class="value">-</div>
+          </div>
+          <div class="item">
+            <div class="label">运行状态</div>
+            <div id="traderRunning" class="value">-</div>
+          </div>
+          <div class="item">
+            <div class="label">Broker</div>
+            <div id="traderBroker" class="value">-</div>
+          </div>
+          <div class="item">
+            <div class="label">Runtime</div>
+            <div id="traderRuntime" class="value">-</div>
+          </div>
+          <div class="item">
+            <div class="label">Strategy File</div>
+            <div id="traderStrategyFile" class="value">-</div>
+          </div>
+        </div>
+        <div class="grid2" style="margin-top:10px;">
+          <div>
+            <div class="muted" style="margin-bottom:8px;">策略配置</div>
+            <div class="grid2">
+              <div>
+                <div class="muted">Strategy ID</div>
+                <input id="traderCfgId" placeholder="etf-breakout-demo" />
+              </div>
+              <div>
+                <div class="muted">名称</div>
+                <input id="traderCfgName" placeholder="CSI300 ETF Demo" />
+              </div>
+              <div>
+                <div class="muted">标的</div>
+                <input id="traderCfgSymbol" placeholder="510300.SH" />
+              </div>
+              <div>
+                <div class="muted">Broker</div>
+                <select id="traderCfgBroker">
+                  <option value="paper">paper</option>
+                  <option value="eastmoney_stub">eastmoney_stub</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">策略</div>
+                <select id="traderCfgStrategy">
+                  <option value="breakout">breakout</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">周期</div>
+                <input id="traderCfgTimeframe" placeholder="1d" />
+              </div>
+              <div>
+                <div class="muted">Quantity</div>
+                <input id="traderCfgQuantity" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <div class="muted">Max Position</div>
+                <input id="traderCfgMaxPosition" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <div class="muted">Breakout Lookback</div>
+                <input id="traderCfgLookback" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <div class="muted">History Window</div>
+                <input id="traderCfgHistoryWindow" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <div class="muted">Stop Loss %</div>
+                <input id="traderCfgStopLoss" type="number" min="0" step="0.001" />
+              </div>
+              <div>
+                <div class="muted">Take Profit %</div>
+                <input id="traderCfgTakeProfit" type="number" min="0" step="0.001" />
+              </div>
+              <div>
+                <div class="muted">Enabled</div>
+                <select id="traderCfgEnabled">
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">Dry Run</div>
+                <select id="traderCfgDryRun">
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button class="secondary" id="btnTraderSave">保存配置</button>
+              <button class="secondary" id="btnTraderSaveAndRun">保存并执行一次</button>
+            </div>
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:8px;">策略状态</div>
+            <pre id="traderState">暂无数据</pre>
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:8px;">最近信号</div>
+            <pre id="traderSignals">暂无数据</pre>
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:8px;">最近订单</div>
+            <pre id="traderOrders">暂无数据</pre>
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:8px;">服务日志</div>
+            <pre id="traderLogs">暂无数据</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="between">
           <h3>日志与配对</h3>
           <div id="logTitle" class="muted">未选择实例</div>
         </div>
@@ -268,6 +400,7 @@
 const state = {
   me: null,
   items: [],
+  trader: null,
   refreshTimer: null,
   authTimer: null,
   currentLogInstanceId: null,
@@ -535,6 +668,66 @@ async function loadInstances() {
   renderInstances();
 }
 
+async function loadTraderSummary() {
+  const data = await api('/api/v1/public/trader/summary');
+  state.trader = data || null;
+  renderTraderSummary();
+}
+
+function renderTraderSummary() {
+  const data = state.trader;
+  document.getElementById('traderAvailable').textContent = data ? (data.available ? 'available' : 'missing') : '-';
+  document.getElementById('traderRunning').textContent = data ? (data.running ? `running (pid ${data.pid || '-'})` : 'stopped') : '-';
+  document.getElementById('traderBroker').textContent = data?.broker || '-';
+  document.getElementById('traderRuntime').textContent = data?.runtime_dir || '-';
+  document.getElementById('traderStrategyFile').textContent = data?.strategy_file || '-';
+  document.getElementById('traderState').textContent = data ? JSON.stringify(data.state || {}, null, 2) : '暂无数据';
+  document.getElementById('traderSignals').textContent = data ? JSON.stringify(data.recent_signals || [], null, 2) : '暂无数据';
+  document.getElementById('traderOrders').textContent = data ? JSON.stringify(data.recent_orders || [], null, 2) : '暂无数据';
+  document.getElementById('traderLogs').textContent = data?.service_log_tail || '暂无数据';
+  renderTraderConfigForm();
+}
+
+function renderTraderConfigForm() {
+  const strategy = state.trader?.strategies?.[0] || {};
+  document.getElementById('traderCfgId').value = strategy.id || 'etf-breakout-demo';
+  document.getElementById('traderCfgName').value = strategy.name || '';
+  document.getElementById('traderCfgSymbol').value = strategy.symbol || '';
+  document.getElementById('traderCfgBroker').value = state.trader?.broker || 'paper';
+  document.getElementById('traderCfgStrategy').value = strategy.strategy || 'breakout';
+  document.getElementById('traderCfgTimeframe').value = strategy.timeframe || '1d';
+  document.getElementById('traderCfgQuantity').value = strategy.quantity ?? 100;
+  document.getElementById('traderCfgMaxPosition').value = strategy.max_position ?? 500;
+  document.getElementById('traderCfgLookback').value = strategy.breakout_lookback ?? 5;
+  document.getElementById('traderCfgHistoryWindow').value = strategy.history_window ?? 20;
+  document.getElementById('traderCfgStopLoss').value = strategy.stop_loss_pct ?? 0.03;
+  document.getElementById('traderCfgTakeProfit').value = strategy.take_profit_pct ?? 0.08;
+  document.getElementById('traderCfgEnabled').value = String(strategy.enabled ?? true);
+  document.getElementById('traderCfgDryRun').value = String(strategy.dry_run ?? true);
+}
+
+function buildTraderConfigPayload() {
+  return {
+    broker: document.getElementById('traderCfgBroker').value,
+    strategy: {
+      id: document.getElementById('traderCfgId').value.trim(),
+      enabled: document.getElementById('traderCfgEnabled').value === 'true',
+      market: 'a-share',
+      symbol: document.getElementById('traderCfgSymbol').value.trim(),
+      name: document.getElementById('traderCfgName').value.trim(),
+      timeframe: document.getElementById('traderCfgTimeframe').value.trim() || '1d',
+      strategy: document.getElementById('traderCfgStrategy').value,
+      history_window: Number(document.getElementById('traderCfgHistoryWindow').value || 20),
+      breakout_lookback: Number(document.getElementById('traderCfgLookback').value || 5),
+      quantity: Number(document.getElementById('traderCfgQuantity').value || 100),
+      max_position: Number(document.getElementById('traderCfgMaxPosition').value || 500),
+      stop_loss_pct: Number(document.getElementById('traderCfgStopLoss').value || 0.03),
+      take_profit_pct: Number(document.getElementById('traderCfgTakeProfit').value || 0.08),
+      dry_run: document.getElementById('traderCfgDryRun').value === 'true',
+    },
+  };
+}
+
 function renderInstances() {
   const body = document.getElementById('instancesBody');
   body.innerHTML = '';
@@ -717,6 +910,36 @@ async function setGlobalModel() {
   await loadInstances();
 }
 
+async function traderAction(path, btn, successMessage) {
+  setButtonLoading(btn, true);
+  try {
+    await api(path, { method: 'POST' });
+    await loadTraderSummary();
+    toast(successMessage);
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+async function saveTraderConfig(runAfterSave = false, btn = null) {
+  setButtonLoading(btn, true);
+  try {
+    const payload = buildTraderConfigPayload();
+    await api('/api/v1/public/trader/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (runAfterSave) {
+      await api('/api/v1/public/trader/run-once', { method: 'POST' });
+    }
+    await loadTraderSummary();
+    toast(runAfterSave ? 'Trader 配置已保存并执行一次' : 'Trader 配置已保存');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
 async function loadRouterModels() {
   const provider = document.getElementById('fProviderGlobal')?.value || 'router';
   if (provider !== 'router') return;
@@ -780,6 +1003,51 @@ function bindEvents() {
     catch (e) { toast(`读取失败: ${e.message}`); }
   };
 
+  document.getElementById('btnTraderRunOnce').onclick = async () => {
+    const btn = document.getElementById('btnTraderRunOnce');
+    try {
+      await traderAction('/api/v1/public/trader/run-once', btn, 'Trader run-once 已执行');
+    } catch (e) {
+      toast(`执行失败: ${e.message}`, 3000);
+    }
+  };
+
+  document.getElementById('btnTraderStart').onclick = async () => {
+    const btn = document.getElementById('btnTraderStart');
+    try {
+      await traderAction('/api/v1/public/trader/start', btn, 'Trader 已启动');
+    } catch (e) {
+      toast(`启动失败: ${e.message}`, 3000);
+    }
+  };
+
+  document.getElementById('btnTraderStop').onclick = async () => {
+    const btn = document.getElementById('btnTraderStop');
+    try {
+      await traderAction('/api/v1/public/trader/stop', btn, 'Trader 已停止');
+    } catch (e) {
+      toast(`停止失败: ${e.message}`, 3000);
+    }
+  };
+
+  document.getElementById('btnTraderSave').onclick = async () => {
+    const btn = document.getElementById('btnTraderSave');
+    try {
+      await saveTraderConfig(false, btn);
+    } catch (e) {
+      toast(`保存失败: ${e.message}`, 3000);
+    }
+  };
+
+  document.getElementById('btnTraderSaveAndRun').onclick = async () => {
+    const btn = document.getElementById('btnTraderSaveAndRun');
+    try {
+      await saveTraderConfig(true, btn);
+    } catch (e) {
+      toast(`保存并执行失败: ${e.message}`, 3000);
+    }
+  };
+
   document.getElementById('fProviderCreate').onchange = () => loadRouterModels().catch(() => {});
   document.getElementById('fProviderGlobal').onchange = () => loadRouterModels().catch(() => {});
   document.getElementById('fSupplierCreate').onchange = () => applyModelFilters();
@@ -791,11 +1059,12 @@ async function bootstrap() {
   const loggedIn = await checkAuth();
   if (!loggedIn) return;
 
-  await Promise.allSettled([loadInstances(), loadRouterModels()]);
+  await Promise.allSettled([loadInstances(), loadRouterModels(), loadTraderSummary()]);
 
   if (state.refreshTimer) clearInterval(state.refreshTimer);
   state.refreshTimer = setInterval(() => {
     loadInstances().catch(() => {});
+    loadTraderSummary().catch(() => {});
   }, 12000);
 
   if (state.authTimer) clearInterval(state.authTimer);

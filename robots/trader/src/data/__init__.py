@@ -1,0 +1,1 @@
+"""iFinD data adapters."""
