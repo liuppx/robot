@@ -302,6 +302,7 @@
                 <div class="muted">策略</div>
                 <select id="traderCfgStrategy">
                   <option value="breakout">breakout</option>
+                  <option value="auction_wave">auction_wave</option>
                 </select>
               </div>
               <div>
@@ -315,6 +316,10 @@
               <div>
                 <div class="muted">Max Position</div>
                 <input id="traderCfgMaxPosition" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <div class="muted">Position Quantity</div>
+                <input id="traderCfgPositionQuantity" type="number" min="0" step="1" />
               </div>
               <div>
                 <div class="muted">Breakout Lookback</div>
@@ -333,6 +338,30 @@
                 <input id="traderCfgTakeProfit" type="number" min="0" step="0.001" />
               </div>
               <div>
+                <div class="muted">Afternoon Exit Time</div>
+                <input id="traderCfgAfternoonExitTime" placeholder="14:30" />
+              </div>
+              <div>
+                <div class="muted">Limit Up Threshold %</div>
+                <input id="traderCfgLimitUpThreshold" type="number" min="0" step="0.1" />
+              </div>
+              <div>
+                <div class="muted">Active Lookback Days</div>
+                <input id="traderCfgActiveLookbackDays" type="number" min="1" step="1" />
+              </div>
+              <div>
+                <div class="muted">Active Threshold %</div>
+                <input id="traderCfgActiveThresholdPct" type="number" min="0" step="0.1" />
+              </div>
+              <div>
+                <div class="muted">Breakout Buffer %</div>
+                <input id="traderCfgBreakoutBufferPct" type="number" min="0" step="0.1" />
+              </div>
+              <div>
+                <div class="muted">Resistance Buffer %</div>
+                <input id="traderCfgResistanceBufferPct" type="number" min="0" step="0.1" />
+              </div>
+              <div>
                 <div class="muted">Enabled</div>
                 <select id="traderCfgEnabled">
                   <option value="true">true</option>
@@ -342,6 +371,13 @@
               <div>
                 <div class="muted">Dry Run</div>
                 <select id="traderCfgDryRun">
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+              <div>
+                <div class="muted">Enable Buy</div>
+                <select id="traderCfgEnableBuy">
                   <option value="true">true</option>
                   <option value="false">false</option>
                 </select>
@@ -698,12 +734,20 @@ function renderTraderConfigForm() {
   document.getElementById('traderCfgTimeframe').value = strategy.timeframe || '1d';
   document.getElementById('traderCfgQuantity').value = strategy.quantity ?? 100;
   document.getElementById('traderCfgMaxPosition').value = strategy.max_position ?? 500;
+  document.getElementById('traderCfgPositionQuantity').value = strategy.position_quantity ?? 0;
   document.getElementById('traderCfgLookback').value = strategy.breakout_lookback ?? 5;
   document.getElementById('traderCfgHistoryWindow').value = strategy.history_window ?? 20;
   document.getElementById('traderCfgStopLoss').value = strategy.stop_loss_pct ?? 0.03;
   document.getElementById('traderCfgTakeProfit').value = strategy.take_profit_pct ?? 0.08;
+  document.getElementById('traderCfgAfternoonExitTime').value = strategy.afternoon_exit_time || '14:30';
+  document.getElementById('traderCfgLimitUpThreshold').value = strategy.limit_up_threshold_pct ?? 9.8;
+  document.getElementById('traderCfgActiveLookbackDays').value = strategy.active_lookback_days ?? 10;
+  document.getElementById('traderCfgActiveThresholdPct').value = strategy.active_threshold_pct ?? 4.0;
+  document.getElementById('traderCfgBreakoutBufferPct').value = strategy.breakout_buffer_pct ?? 0.2;
+  document.getElementById('traderCfgResistanceBufferPct').value = strategy.resistance_buffer_pct ?? 1.0;
   document.getElementById('traderCfgEnabled').value = String(strategy.enabled ?? true);
   document.getElementById('traderCfgDryRun').value = String(strategy.dry_run ?? true);
+  document.getElementById('traderCfgEnableBuy').value = String(strategy.enable_buy ?? false);
 }
 
 function buildTraderConfigPayload() {
@@ -721,9 +765,17 @@ function buildTraderConfigPayload() {
       breakout_lookback: Number(document.getElementById('traderCfgLookback').value || 5),
       quantity: Number(document.getElementById('traderCfgQuantity').value || 100),
       max_position: Number(document.getElementById('traderCfgMaxPosition').value || 500),
+      position_quantity: Number(document.getElementById('traderCfgPositionQuantity').value || 0),
       stop_loss_pct: Number(document.getElementById('traderCfgStopLoss').value || 0.03),
       take_profit_pct: Number(document.getElementById('traderCfgTakeProfit').value || 0.08),
+      afternoon_exit_time: document.getElementById('traderCfgAfternoonExitTime').value.trim() || '14:30',
+      limit_up_threshold_pct: Number(document.getElementById('traderCfgLimitUpThreshold').value || 9.8),
+      active_lookback_days: Number(document.getElementById('traderCfgActiveLookbackDays').value || 10),
+      active_threshold_pct: Number(document.getElementById('traderCfgActiveThresholdPct').value || 4.0),
+      breakout_buffer_pct: Number(document.getElementById('traderCfgBreakoutBufferPct').value || 0.2),
+      resistance_buffer_pct: Number(document.getElementById('traderCfgResistanceBufferPct').value || 1.0),
       dry_run: document.getElementById('traderCfgDryRun').value === 'true',
+      enable_buy: document.getElementById('traderCfgEnableBuy').value === 'true',
     },
   };
 }

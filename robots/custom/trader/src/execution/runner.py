@@ -6,15 +6,25 @@ from typing import Any
 
 from ..audit.logger import append_jsonl
 from ..brokers.base import BrokerAdapter, OrderIntent
-from ..data.ifind_client import IfindClient, extract_close_series, extract_latest_price
+from ..data.ifind_client import (
+    IfindClient,
+    extract_close_series,
+    extract_latest_price,
+    extract_observed_at,
+    extract_pre_close,
+)
 from ..risk.rules import evaluate_risk
 from ..state_store import StateStore
 from ..strategies.base import MarketSnapshot
+from ..strategies.auction_wave import AuctionWaveStrategy
 from ..strategies.breakout import BreakoutStrategy
 from .planner import build_order_intent
 
 
-def _build_strategy(strategy_config: dict[str, Any]) -> BreakoutStrategy:
+def _build_strategy(strategy_config: dict[str, Any]):
+    strategy_type = str(strategy_config.get("strategy", "breakout")).strip().lower()
+    if strategy_type == "auction_wave":
+        return AuctionWaveStrategy(strategy_config)
     return BreakoutStrategy(strategy_config)
 
 
@@ -46,10 +56,14 @@ def run_cycle(
         snapshot = MarketSnapshot(
             symbol=symbol,
             latest_price=extract_latest_price(realtime_payload),
+            pre_close=extract_pre_close(realtime_payload),
             close_series=extract_close_series(history_payload),
+            observed_at=extract_observed_at(realtime_payload),
         )
         strategy = _build_strategy(strategy_config)
-        signal = strategy.evaluate(snapshot)
+        previous_entry = current_state["strategies"].get(strategy_config["id"], {})
+        previous_state = previous_entry.get("strategyState", previous_entry)
+        signal = strategy.evaluate(snapshot, previous_state)
         risk_ok, risk_reason = evaluate_risk(strategy_config, signal.action, signal.target_quantity)
         signal_record = {
             "strategyId": strategy_config["id"],
@@ -90,13 +104,19 @@ def run_cycle(
                 },
             )
 
+        next_state = signal.metadata.get("next_state", previous_state)
         current_state["strategies"][strategy_config["id"]] = {
             "symbol": symbol,
+            "strategy": strategy_config.get("strategy", "breakout"),
             "lastAction": signal.action,
             "lastReason": signal.reason,
             "latestPrice": signal.latest_price,
+            "preClose": snapshot.pre_close,
+            "observedAt": snapshot.observed_at.isoformat(timespec="seconds") if snapshot.observed_at else None,
             "riskOk": risk_ok,
             "riskReason": risk_reason,
+            "strategyState": next_state,
+            "metadata": signal.metadata,
             "orderResult": order_result,
         }
         results.append(current_state["strategies"][strategy_config["id"]])
