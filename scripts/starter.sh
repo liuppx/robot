@@ -14,7 +14,7 @@ USAGE
 
 load_env() {
   local primary="$ROOT_DIR/config/bot-hub.env"
-  local fallback="$ROOT_DIR/rust/control-plane/.env"
+  local fallback="$ROOT_DIR/dashboard/.env"
   local template="$ROOT_DIR/config/bot-hub.env.template"
   local loaded=""
 
@@ -53,8 +53,8 @@ resolve_bin() {
 
   candidates+=(
     "$ROOT_DIR/build/bot-hub-control-plane"
-    "$ROOT_DIR/rust/control-plane/target/release/bot-hub-control-plane"
-    "$ROOT_DIR/rust/control-plane/target/debug/bot-hub-control-plane"
+    "$ROOT_DIR/dashboard/target/release/bot-hub-control-plane"
+    "$ROOT_DIR/dashboard/target/debug/bot-hub-control-plane"
   )
 
   local p

@@ -62,8 +62,8 @@ flowchart LR
 
 ### 3.1 分层说明
 
-1. **交互层**：`rust/control-plane/web/index.html`，负责页面交互与轮询。
-2. **控制层**：`rust/control-plane/src/main.rs`，负责 API、编排、状态机、自愈。
+1. **交互层**：`dashboard/web/index.html`，负责页面交互与轮询。
+2. **控制层**：`dashboard/src/main.rs`，负责 API、编排、状态机、自愈。
 3. **执行层**：`openclaw --profile hub-xxx ...`，真正跑 channel 与 agent。
 4. **外部依赖层**：Router API、WhatsApp/DingTalk 网络、钱包扩展。
 
@@ -73,7 +73,7 @@ flowchart LR
 
 ```text
 bot_hub/
-├─ rust/control-plane/
+├─ dashboard/
 │  ├─ src/main.rs                  # 控制平面核心逻辑（单文件 MVP）
 │  ├─ web/index.html               # Web UI（纯静态）
 │  └─ .env.example                 # 运行环境模板
@@ -290,7 +290,7 @@ flowchart TD
 
 ## 10. 前端交互设计（单页控制台）
 
-前端是一个纯静态单页：`rust/control-plane/web/index.html`。
+前端是一个纯静态单页：`dashboard/web/index.html`。
 
 ### 10.1 关键行为
 
@@ -395,7 +395,7 @@ flowchart TD
 build/bot-hub-control-plane
 config/bot-hub.env.template
 scripts/starter.sh
-rust/control-plane/web/
+dashboard/web/
 VERSION / COMMIT / BUILD_SOURCE_BRANCH
 ```
 

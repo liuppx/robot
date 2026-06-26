@@ -226,3 +226,10 @@ coding-bot/__pycache__/
 coding-bot/*.egg-info/
 coding-bot/data/
 coding-bot/secrets/
+
+# trader bot local runtime files
+robots/trader/.venv/
+robots/trader/runtime/
+robots/trader/config/trader.env
+robots/trader/config/strategies.yaml
+*.swp

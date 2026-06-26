@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/rust/control-plane"
+APP_DIR="$ROOT_DIR/dashboard"
 
 if [[ -f "$HOME/.cargo/env" ]]; then
   # shellcheck disable=SC1090

@@ -10,8 +10,8 @@ tag_arg="${1:-}"
 source_dir=""
 worktree_dir=""
 
-binary_rel="rust/control-plane/target/release/bot-hub-control-plane"
-web_rel="rust/control-plane/web"
+binary_rel="dashboard/target/release/bot-hub-control-plane"
+web_rel="dashboard/web"
 env_template_rel="config/bot-hub.env.template"
 starter_rel="scripts/starter.sh"
 
@@ -87,7 +87,7 @@ build_artifacts() {
 
   ensure_cargo
   echo "Building Rust control-plane binary (release)..."
-  (cd "$source_dir/rust/control-plane" && cargo build --release)
+  (cd "$source_dir/dashboard" && cargo build --release)
 }
 
 verify_artifacts() {
@@ -209,13 +209,13 @@ archive_path="$out_dir/${pkg_name}.tar.gz"
 
 mkdir -p "$out_dir"
 rm -rf "$stage_dir"
-mkdir -p "$stage_dir/build" "$stage_dir/config" "$stage_dir/scripts" "$stage_dir/rust/control-plane"
+mkdir -p "$stage_dir/build" "$stage_dir/config" "$stage_dir/scripts" "$stage_dir/dashboard"
 
 cp "$source_dir/$binary_rel" "$stage_dir/build/bot-hub-control-plane"
 cp "$source_dir/$env_template_rel" "$stage_dir/config/bot-hub.env.template"
 cp "$source_dir/$starter_rel" "$stage_dir/scripts/starter.sh"
 chmod +x "$stage_dir/scripts/starter.sh"
-cp -R "$source_dir/$web_rel" "$stage_dir/rust/control-plane/"
+cp -R "$source_dir/$web_rel" "$stage_dir/dashboard/"
 
 printf '%s\n' "$target_tag" > "$stage_dir/VERSION"
 printf '%s\n' "$build_hash_full" > "$stage_dir/COMMIT"

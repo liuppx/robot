@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LOCK_FILE="$ROOT_DIR/versions.lock"
+LOCK_FILE="$ROOT_DIR/scripts/setup/openclaw.versions.lock"
 
 if [[ -f "$LOCK_FILE" ]]; then
   # shellcheck disable=SC1090

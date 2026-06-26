@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/config/bot-hub.env"
-LEGACY_ENV_FILE="$ROOT_DIR/rust/control-plane/.env"
+LEGACY_ENV_FILE="$ROOT_DIR/dashboard/.env"
 PID_FILE="$ROOT_DIR/runtime/control-plane/control-plane.pid"
 LOG_FILE="$ROOT_DIR/runtime/control-plane/logs/control-plane.out.log"
 BIND="127.0.0.1:3900"

@@ -9,7 +9,7 @@ to make those boundaries explicit.
 These directories define the current Bot Hub runtime and managed robot set and should be treated as
 the main delivery path:
 
-- `rust/control-plane/`: current control-plane service, static web UI, and API
+- `dashboard/`: current control-plane service, static web UI, and API
   implementation.
 - `robots/openclaw/`: current OpenClaw-based managed robot implementations.
 - `robots/nanobot/`: current nanobot code kept under the unified robot tree.

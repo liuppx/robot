@@ -207,6 +207,29 @@ struct InstanceDiagnoseResponse {
     evidence: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct TraderSummaryResponse {
+    available: bool,
+    broker: String,
+    running: bool,
+    pid: Option<u32>,
+    runtime_dir: String,
+    strategy_file: String,
+    state_file: String,
+    service_log_path: String,
+    strategies: Vec<Value>,
+    state: Value,
+    recent_signals: Vec<Value>,
+    recent_orders: Vec<Value>,
+    service_log_tail: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraderConfigUpdateRequest {
+    broker: String,
+    strategy: Value,
+}
+
 #[tokio::main]
 async fn main() {
     init_tracing();
@@ -281,6 +304,11 @@ async fn main() {
             "/api/v1/public/bot/instances/{id}/diagnose",
             get(public_diagnose_instance),
         )
+        .route("/api/v1/public/trader/summary", get(public_trader_summary))
+        .route("/api/v1/public/trader/config", get(public_trader_summary).put(public_trader_config_update))
+        .route("/api/v1/public/trader/run-once", post(public_trader_run_once))
+        .route("/api/v1/public/trader/start", post(public_trader_start))
+        .route("/api/v1/public/trader/stop", post(public_trader_stop))
         .route(
             "/api/v1/admin/router/default-model",
             patch(admin_patch_default_model),
@@ -291,7 +319,7 @@ async fn main() {
             post(internal_runtime_probe),
         );
 
-    let web_dir = format!("{}/rust/control-plane/web", cfg.repo_root);
+    let web_dir = format!("{}/dashboard/web", cfg.repo_root);
     let index_file = format!("{web_dir}/index.html");
 
     let app = Router::new()
@@ -336,22 +364,12 @@ fn init_tracing() {
 
 fn guess_repo_root() -> String {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if cwd.ends_with("rust/control-plane") {
+    if cwd.ends_with("dashboard") {
         return cwd
             .parent()
-            .and_then(|p| p.parent())
             .unwrap_or(&cwd)
             .to_string_lossy()
             .to_string();
-    }
-    if let Some(parent) = cwd.parent() {
-        if parent.ends_with("rust") {
-            return parent
-                .parent()
-                .unwrap_or(parent)
-                .to_string_lossy()
-                .to_string();
-        }
     }
     cwd.to_string_lossy().to_string()
 }
@@ -422,6 +440,195 @@ fn load_db_state(cfg: &StaticConfig) -> Result<DbState, String> {
     let raw = fs::read_to_string(&cfg.state_file)
         .map_err(|e| format!("read state file failed {}: {e}", cfg.state_file))?;
     serde_json::from_str(&raw).map_err(|e| format!("parse state file failed: {e}"))
+}
+
+fn read_env_like_file(path: &FsPath) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    let Ok(raw) = fs::read_to_string(path) else {
+        return values;
+    };
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            values.insert(
+                key.trim().to_string(),
+                value.trim().trim_matches('"').trim_matches('\'').to_string(),
+            );
+        }
+    }
+    values
+}
+
+fn read_json_file_or_default(path: &FsPath) -> Value {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+fn read_last_jsonl(path: &FsPath, limit: usize) -> Vec<Value> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+    let mut queue: VecDeque<String> = VecDeque::with_capacity(limit.max(1));
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if queue.len() == limit {
+            queue.pop_front();
+        }
+        queue.push_back(line);
+    }
+    queue
+        .into_iter()
+        .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+        .collect()
+}
+
+fn read_last_text_lines(path: &FsPath, limit: usize) -> String {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return String::new(),
+    };
+    let mut queue: VecDeque<String> = VecDeque::with_capacity(limit.max(1));
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if queue.len() == limit {
+            queue.pop_front();
+        }
+        queue.push_back(line);
+    }
+    queue.into_iter().collect::<Vec<_>>().join("\n")
+}
+
+fn read_trader_strategies(path: &FsPath) -> Vec<Value> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return Vec::new(),
+    };
+    let parsed = match serde_yaml::from_str::<Value>(&raw) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    parsed
+        .get("strategies")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn write_trader_config(
+    trader_root: &FsPath,
+    broker: &str,
+    strategies: &[Value],
+) -> Result<(), String> {
+    let (env_file, env_template) = trader_env_paths(trader_root);
+    let mut env_values = if env_file.exists() {
+        read_env_like_file(&env_file)
+    } else {
+        read_env_like_file(&env_template)
+    };
+    env_values.insert("TRADER_BROKER".to_string(), broker.to_string());
+
+    let env_order = [
+        "TRADER_BOT_NAME",
+        "TRADER_BIND_MODE",
+        "TRADER_LOOP_INTERVAL_SECONDS",
+        "TRADER_LOG_LEVEL",
+        "TRADER_RUNTIME_DIR",
+        "TRADER_STRATEGY_FILE",
+        "TRADER_BROKER",
+        "IFIND_BASE_URL",
+        "IFIND_ACCESS_TOKEN",
+        "IFIND_REFRESH_TOKEN",
+        "IFIND_REQUEST_TIMEOUT_MS",
+        "TRADER_EASTMONEY_ACCOUNT_ID",
+    ];
+    let mut lines = Vec::new();
+    for key in env_order {
+        if let Some(value) = env_values.get(key) {
+            lines.push(format!("{key}={value}"));
+        }
+    }
+    for (key, value) in env_values.iter() {
+        if env_order.contains(&key.as_str()) {
+            continue;
+        }
+        lines.push(format!("{key}={value}"));
+    }
+    fs::write(&env_file, lines.join("\n") + "\n")
+        .map_err(|e| format!("write trader env failed {}: {e}", env_file.display()))?;
+
+    let strategy_file = trader_strategy_file(trader_root, &env_values);
+    let yaml_value = json!({ "strategies": strategies });
+    let yaml_raw = serde_yaml::to_string(&yaml_value)
+        .map_err(|e| format!("serialize trader strategies failed: {e}"))?;
+    fs::write(&strategy_file, yaml_raw)
+        .map_err(|e| format!("write trader strategies failed {}: {e}", strategy_file.display()))?;
+    Ok(())
+}
+
+fn trader_root(cfg: &StaticConfig) -> PathBuf {
+    FsPath::new(&cfg.repo_root).join("robots/trader")
+}
+
+fn trader_env_paths(root: &FsPath) -> (PathBuf, PathBuf) {
+    (
+        root.join("config/trader.env"),
+        root.join("config/trader.env.template"),
+    )
+}
+
+fn trader_env_values(root: &FsPath) -> HashMap<String, String> {
+    let (env_file, env_template) = trader_env_paths(root);
+    if env_file.exists() {
+        read_env_like_file(&env_file)
+    } else {
+        read_env_like_file(&env_template)
+    }
+}
+
+fn trader_runtime_dir(root: &FsPath, env_values: &HashMap<String, String>) -> PathBuf {
+    let runtime_dir = env_values
+        .get("TRADER_RUNTIME_DIR")
+        .cloned()
+        .unwrap_or_else(|| "runtime".to_string());
+    if FsPath::new(&runtime_dir).is_absolute() {
+        PathBuf::from(runtime_dir)
+    } else {
+        root.join(runtime_dir)
+    }
+}
+
+fn trader_strategy_file(root: &FsPath, env_values: &HashMap<String, String>) -> PathBuf {
+    let strategy_file = env_values
+        .get("TRADER_STRATEGY_FILE")
+        .cloned()
+        .unwrap_or_else(|| "config/strategies.yaml".to_string());
+    if FsPath::new(&strategy_file).is_absolute() {
+        PathBuf::from(strategy_file)
+    } else {
+        root.join(strategy_file)
+    }
+}
+
+fn trader_pid(runtime_dir: &FsPath) -> Option<u32> {
+    let pid_file = runtime_dir.join("trader.pid");
+    let raw = fs::read_to_string(pid_file).ok()?;
+    raw.trim().parse::<u32>().ok()
+}
+
+fn is_process_running(pid: u32) -> bool {
+    Command::new("bash")
+        .arg("-lc")
+        .arg(format!("ps -p {pid} -o pid="))
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 async fn persist_db(state: &AppState) -> Result<(), String> {
@@ -1474,6 +1681,170 @@ async fn public_router_models(State(state): State<AppState>, headers: HeaderMap)
 
     let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({"raw": text}));
     ok(json!({"models": parsed}))
+}
+
+async fn public_trader_summary(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_user(&state, &headers).await {
+        return resp;
+    }
+
+    let trader_root = trader_root(&state.cfg);
+    if !trader_root.exists() {
+        return ok(TraderSummaryResponse {
+            available: false,
+            broker: "unavailable".to_string(),
+            running: false,
+            pid: None,
+            runtime_dir: trader_root.join("runtime").display().to_string(),
+            strategy_file: trader_root
+                .join("config/strategies.yaml")
+                .display()
+                .to_string(),
+            state_file: trader_root.join("runtime/state.json").display().to_string(),
+            service_log_path: trader_root
+                .join("runtime/logs/service.log")
+                .display()
+                .to_string(),
+            strategies: Vec::new(),
+            state: json!({}),
+            recent_signals: Vec::new(),
+            recent_orders: Vec::new(),
+            service_log_tail: String::new(),
+        });
+    }
+
+    let env_values = trader_env_values(&trader_root);
+
+    let broker = env_values
+        .get("TRADER_BROKER")
+        .cloned()
+        .unwrap_or_else(|| "paper".to_string());
+
+    let runtime_dir = trader_runtime_dir(&trader_root, &env_values);
+    let strategy_file = trader_strategy_file(&trader_root, &env_values);
+    let pid = trader_pid(&runtime_dir);
+    let running = pid.map(is_process_running).unwrap_or(false);
+
+    let state_file = runtime_dir.join("state.json");
+    let signals_file = runtime_dir.join("signals.jsonl");
+    let orders_file = runtime_dir.join("orders.jsonl");
+    let service_log_path = runtime_dir.join("logs/service.log");
+
+    ok(TraderSummaryResponse {
+        available: true,
+        broker,
+        running,
+        pid: if running { pid } else { None },
+        runtime_dir: runtime_dir.display().to_string(),
+        strategy_file: strategy_file.display().to_string(),
+        state_file: state_file.display().to_string(),
+        service_log_path: service_log_path.display().to_string(),
+        strategies: read_trader_strategies(&strategy_file),
+        state: read_json_file_or_default(&state_file),
+        recent_signals: read_last_jsonl(&signals_file, 8),
+        recent_orders: read_last_jsonl(&orders_file, 8),
+        service_log_tail: read_last_text_lines(&service_log_path, 40),
+    })
+}
+
+async fn public_trader_config_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<TraderConfigUpdateRequest>,
+) -> Response {
+    if let Err(resp) = require_user(&state, &headers).await {
+        return resp;
+    }
+    let trader_root = trader_root(&state.cfg);
+    if !trader_root.exists() {
+        return err(StatusCode::NOT_FOUND, "trader robot not found");
+    }
+    let broker = payload.broker.trim().to_lowercase();
+    if broker != "paper" && broker != "eastmoney_stub" {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "trader broker must be paper or eastmoney_stub",
+        );
+    }
+    let strategy_obj = match payload.strategy.as_object() {
+        Some(value) => value.clone(),
+        None => return err(StatusCode::BAD_REQUEST, "strategy must be an object"),
+    };
+    let strategy_id = strategy_obj
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let symbol = strategy_obj
+        .get("symbol")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if strategy_id.is_empty() || symbol.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "strategy id and symbol are required");
+    }
+    let strategies = vec![Value::Object(strategy_obj)];
+    if let Err(message) = write_trader_config(&trader_root, &broker, &strategies) {
+        return err(StatusCode::BAD_GATEWAY, message);
+    }
+    ok(json!({
+        "saved": true,
+        "broker": broker,
+        "strategyCount": 1,
+    }))
+}
+
+async fn public_trader_run_once(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_user(&state, &headers).await {
+        return resp;
+    }
+    let trader_root = trader_root(&state.cfg);
+    if !trader_root.exists() {
+        return err(StatusCode::NOT_FOUND, "trader robot not found");
+    }
+    match run_shell(&format!("cd {} && ./scripts/run_once.sh", sh_quote(&trader_root.display().to_string()))) {
+        Ok(output) => ok(json!({
+            "executed": true,
+            "stdout": output,
+        })),
+        Err(message) => err(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn public_trader_start(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_user(&state, &headers).await {
+        return resp;
+    }
+    let trader_root = trader_root(&state.cfg);
+    if !trader_root.exists() {
+        return err(StatusCode::NOT_FOUND, "trader robot not found");
+    }
+    match run_shell(&format!("cd {} && ./scripts/start_bot.sh", sh_quote(&trader_root.display().to_string()))) {
+        Ok(output) => ok(json!({
+            "started": true,
+            "stdout": output,
+        })),
+        Err(message) => err(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn public_trader_stop(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_user(&state, &headers).await {
+        return resp;
+    }
+    let trader_root = trader_root(&state.cfg);
+    if !trader_root.exists() {
+        return err(StatusCode::NOT_FOUND, "trader robot not found");
+    }
+    match run_shell(&format!("cd {} && ./scripts/stop_bot.sh", sh_quote(&trader_root.display().to_string()))) {
+        Ok(output) => ok(json!({
+            "stopped": true,
+            "stdout": output,
+        })),
+        Err(message) => err(StatusCode::BAD_GATEWAY, message),
+    }
 }
 
 async fn public_list_instances(State(state): State<AppState>, headers: HeaderMap) -> Response {

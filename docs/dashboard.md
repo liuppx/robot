@@ -1,8 +1,8 @@
-# Rust Control Plane（Bot 平面，生产入口）
+# Dashboard（Bot 平面，生产入口）
 
 ## 1. 定位
 
-Rust Control Plane 是本仓库的唯一生产控制入口：
+Dashboard 是本仓库的唯一生产控制入口：
 
 - 钱包登录门禁
 - 多实例编排（WhatsApp / DingTalk）
@@ -12,7 +12,7 @@ Rust Control Plane 是本仓库的唯一生产控制入口：
 ## 2. 目录
 
 ```text
-rust/control-plane/
+dashboard/
   Cargo.toml
   .env.example
   src/main.rs
