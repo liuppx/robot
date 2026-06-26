@@ -4,7 +4,7 @@ from .base import MarketSnapshot, Signal, Strategy
 
 
 class BreakoutStrategy(Strategy):
-    def evaluate(self, snapshot: MarketSnapshot) -> Signal:
+    def evaluate(self, snapshot: MarketSnapshot, prior_state: dict | None = None) -> Signal:
         closes = snapshot.close_series
         latest = snapshot.latest_price
         quantity = int(self.config.get("quantity", 100))

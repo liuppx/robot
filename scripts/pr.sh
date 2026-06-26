@@ -183,6 +183,8 @@ run_gh_pr_create() {
   local base="$1"
   local head="$2"
   local -a cmd=(gh pr create --base "$base" --head "$head")
+  local auto_title=""
+  local auto_body=""
 
   if [ "$INTERACTIVE" != "true" ]; then
     if [ -n "${PR_TITLE:-}" ] || [ -n "${PR_BODY:-}" ]; then
@@ -192,7 +194,16 @@ run_gh_pr_create() {
       fi
       cmd+=(--title "$PR_TITLE" --body "$PR_BODY")
     elif [ "$AUTO_FILL_PR" = "true" ]; then
-      cmd+=(--fill)
+      if [ "$CURRENT_BRANCH" = "$DEFAULT_BASE_BRANCH" ] || [ "$CURRENT_BRANCH" = "$base" ]; then
+        auto_title="$(git log -1 --pretty=%s)"
+        auto_body="$(git log --format='- %s' "upstream/${base}..HEAD" 2>/dev/null || true)"
+        if [ -z "$auto_body" ]; then
+          auto_body="- ${auto_title}"
+        fi
+        cmd+=(--title "$auto_title" --body "$auto_body")
+      else
+        cmd+=(--fill)
+      fi
     fi
   fi
 
@@ -232,6 +243,16 @@ gh_pr_create_with_default_repo() {
       info "  2) 或为 GH_TOKEN 授予目标仓库的 Pull requests: Read and write 权限"
     fi
     return 1
+  fi
+
+  if printf '%s' "$output" | grep -qi "already exists"; then
+    local existing_url
+    existing_url="$(printf '%s\n' "$output" | rg -o 'https://github.com/[^[:space:]]+' -N -m 1 || true)"
+    info "检测到该分支的 PR 已存在，复用现有 PR。"
+    if [ -n "$existing_url" ]; then
+      info "$existing_url"
+    fi
+    return 0
   fi
 
   # 可能是 default repo 未设置：先设置 upstream 后重试

@@ -228,8 +228,8 @@ coding-bot/data/
 coding-bot/secrets/
 
 # trader bot local runtime files
-robots/trader/.venv/
-robots/trader/runtime/
-robots/trader/config/trader.env
-robots/trader/config/strategies.yaml
+robots/custom/trader/.venv/
+robots/custom/trader/runtime/
+robots/custom/trader/config/trader.env
+robots/custom/trader/config/strategies.yaml
 *.swp

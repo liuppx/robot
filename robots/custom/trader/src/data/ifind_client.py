@@ -144,6 +144,49 @@ def extract_latest_price(payload: Any) -> float | None:
     return None
 
 
+def extract_pre_close(payload: Any) -> float | None:
+    if isinstance(payload, dict):
+        table = payload.get("table")
+        if isinstance(table, dict):
+            value = table.get("preClose") or table.get("preclose")
+            if isinstance(value, list) and value:
+                return _coerce_float(value[0])
+            return _coerce_float(value)
+        for key in ("tables", "data", "result", "results"):
+            extracted = extract_pre_close(payload.get(key))
+            if extracted is not None:
+                return extracted
+        if "preClose" in payload or "preclose" in payload:
+            return _coerce_float(payload.get("preClose") or payload.get("preclose"))
+    elif isinstance(payload, list):
+        for item in payload:
+            extracted = extract_pre_close(item)
+            if extracted is not None:
+                return extracted
+    return None
+
+
+def extract_observed_at(payload: Any) -> datetime | None:
+    if isinstance(payload, dict):
+        if "time" in payload and isinstance(payload["time"], list) and payload["time"]:
+            raw = payload["time"][0]
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    return datetime.strptime(raw, fmt)
+                except ValueError:
+                    pass
+        for key in ("tables", "data", "result", "results"):
+            extracted = extract_observed_at(payload.get(key))
+            if extracted is not None:
+                return extracted
+    elif isinstance(payload, list):
+        for item in payload:
+            extracted = extract_observed_at(item)
+            if extracted is not None:
+                return extracted
+    return None
+
+
 def extract_close_series(payload: Any) -> list[float]:
     values: list[float] = []
     if isinstance(payload, dict):

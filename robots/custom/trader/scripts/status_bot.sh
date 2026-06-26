@@ -8,7 +8,7 @@ STATE_FILE="${STATE_FILE:-${APP_DIR}/runtime/state.json}"
 
 if [[ -f "${PID_FILE}" ]]; then
   PID="$(cat "${PID_FILE}")"
-  if [[ -n "${PID}" ]] && ps -p "${PID}" -o pid= >/dev/null 2>&1; then
+  if [[ -n "${PID}" ]] && kill -0 "${PID}" 2>/dev/null; then
     echo "trader running pid=${PID}"
   else
     echo "trader not running"
