@@ -5,11 +5,11 @@ from pydantic import BaseModel
 
 class HealthResponse(BaseModel):
     ok: bool = True
-    service: str = "robot-control-plane"
+    service: str = "robot-hub"
 
 
 class VersionResponse(BaseModel):
-    name: str = "robot-control-plane"
+    name: str = "robot-hub"
     version: str = "0.1.0"
     runtime: str = "python"
 

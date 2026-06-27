@@ -1,5 +1,5 @@
 [project]
-name = "robot-control-plane"
+name = "robot-hub"
 version = "0.1.0"
 description = "Python control plane for the robot hub"
 readme = "README.md"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-robot-control-plane = "control_plane.app:main"
+robot-hub = "hub.app:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

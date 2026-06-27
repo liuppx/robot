@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from control_plane.api import public_router
-from control_plane.config import Settings
+from hub.api import public_router
+from hub.config import Settings
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -32,7 +32,7 @@ def main() -> None:
     settings = Settings()
     host, port = settings.bind_addr.split(":")
     uvicorn.run(
-        "control_plane.app:create_app",
+        "hub.app:create_app",
         factory=True,
         host=host,
         port=int(port),

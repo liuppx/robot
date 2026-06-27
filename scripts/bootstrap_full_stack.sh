@@ -11,8 +11,8 @@ APP_ENV_FILE="$APP_DIR/.env"
 SKIP_OPENCLAW_INSTALL="${SKIP_OPENCLAW_INSTALL:-0}"
 
 echo "[step] bootstrap hub"
-if [[ -x "$APP_DIR/.venv/bin/robot-control-plane" ]]; then
-  echo "[ok] python control plane already prepared: $APP_DIR/.venv/bin/robot-control-plane"
+if [[ -x "$APP_DIR/.venv/bin/robot-hub" ]]; then
+  echo "[ok] python hub already prepared: $APP_DIR/.venv/bin/robot-hub"
 elif command -v uv >/dev/null 2>&1; then
   echo "[step] install python control plane dependencies"
   (cd "$APP_DIR" && uv sync)

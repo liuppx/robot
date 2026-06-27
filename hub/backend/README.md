@@ -1,4 +1,4 @@
-# Dashboard Backend
+# Hub Backend
 
 `hub/backend` 是新的 Python 控制面骨架，目标定位是通用机器人管理后台。
 
@@ -20,7 +20,7 @@
 
 ```text
 hub/backend/
-  src/control_plane/
+  src/hub/
     api/
     adapters/
     models/

@@ -16,7 +16,7 @@ hub/
   backend/
     .env.example
     pyproject.toml
-    src/control_plane/
+    src/hub/
   ui/
     index.html
 robots/

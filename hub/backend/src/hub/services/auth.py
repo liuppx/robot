@@ -9,8 +9,8 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
 
-from control_plane.config import Settings
-from control_plane.models import AuthSessionConnectRequest, AuthSessionView
+from hub.config import Settings
+from hub.models import AuthSessionConnectRequest, AuthSessionView
 
 SESSION_COOKIE_NAME = "hub_session"
 

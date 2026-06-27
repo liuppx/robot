@@ -17,14 +17,14 @@ elif [[ -f "$APP_DIR/.env" ]]; then
   set +a
 fi
 
-echo "[run] robot control plane on ${HUB_BIND_ADDR:-127.0.0.1:3900}"
-if [[ -x "$APP_DIR/.venv/bin/robot-control-plane" ]]; then
-  exec "$APP_DIR/.venv/bin/robot-control-plane"
+echo "[run] robot hub on ${HUB_BIND_ADDR:-127.0.0.1:3900}"
+if [[ -x "$APP_DIR/.venv/bin/robot-hub" ]]; then
+  exec "$APP_DIR/.venv/bin/robot-hub"
 fi
 
 if command -v uv >/dev/null 2>&1; then
   cd "$APP_DIR"
-  exec uv run robot-control-plane
+  exec uv run robot-hub
 fi
 
 echo "[error] python control plane is not prepared. Run scripts/bootstrap_full_stack.sh first." >&2

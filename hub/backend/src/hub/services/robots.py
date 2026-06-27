@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from control_plane.models import RobotListItem, RobotListResponse
+from hub.models import RobotListItem, RobotListResponse
 
 
 @dataclass(slots=True)

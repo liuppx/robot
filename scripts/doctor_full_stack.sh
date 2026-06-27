@@ -21,10 +21,10 @@ else
   echo "[warn] uv missing"
 fi
 
-if [[ -x "$ROOT_DIR/hub/backend/.venv/bin/robot-control-plane" ]]; then
-  echo "[ok] python control plane executable ready"
+if [[ -x "$ROOT_DIR/hub/backend/.venv/bin/robot-hub" ]]; then
+  echo "[ok] python hub executable ready"
 else
-  echo "[warn] python control plane executable missing; run scripts/bootstrap_full_stack.sh"
+  echo "[warn] python hub executable missing; run scripts/bootstrap_full_stack.sh"
 fi
 
 if command -v openclaw >/dev/null 2>&1; then

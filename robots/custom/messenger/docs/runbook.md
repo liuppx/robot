@@ -4,7 +4,7 @@
 
 当前“信使”机器人的控制面主要由 `hub/` 提供：
 
-- 后端入口：`hub/backend/src/control_plane/`
+- 后端入口：`hub/backend/src/hub/`
 - 前端入口：`hub/ui/index.html`
 
 本目录当前用于承接：

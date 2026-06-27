@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from control_plane.models import (
+from hub.models import (
     BotInstanceActionResponse,
     BotInstanceCreateRequest,
     BotInstanceDiagnoseResponse,

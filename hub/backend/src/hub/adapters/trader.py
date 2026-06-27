@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from control_plane.models import (
+from hub.models import (
     TraderActionResponse,
     TraderConfigUpdateResponse,
     TraderSummaryResponse,

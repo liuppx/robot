@@ -63,7 +63,7 @@ flowchart LR
 ### 3.1 分层说明
 
 1. **交互层**：`hub/ui/index.html`，负责页面交互与轮询。
-2. **控制层**：`hub/backend/src/control_plane/`，负责 API、编排、状态机、自愈。
+2. **控制层**：`hub/backend/src/hub/`，负责 API、编排、状态机、自愈。
 3. **执行层**：`openclaw --profile hub-xxx ...`，真正跑 channel 与 agent。
 4. **外部依赖层**：Router API、WhatsApp/DingTalk 网络、钱包扩展。
 
@@ -75,7 +75,7 @@ flowchart LR
 hub/
 ├─ hub/
 │  ├─ backend/
-│  │  ├─ src/control_plane/        # Python 控制面
+│  │  ├─ src/hub/                  # Python 控制面
 │  │  ├─ .env.example              # 运行环境模板
 │  │  ├─ pyproject.toml
 │  │  └─ uv.lock

@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi import Query
 
-from control_plane.adapters import TraderAdapter
-from control_plane.config import Settings
-from control_plane.models import (
+from hub.adapters import TraderAdapter
+from hub.config import Settings
+from hub.models import (
     BotInstanceActionResponse,
     AuthSessionConnectRequest,
     AuthSessionView,
@@ -26,7 +26,7 @@ from control_plane.models import (
     TraderSummaryResponse,
     VersionResponse,
 )
-from control_plane.services import (
+from hub.services import (
     MessengerStateService,
     RobotRegistry,
     SESSION_COOKIE_NAME,
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api/v1/public", tags=["public"])
 
 
 def messenger_service(settings: Settings) -> MessengerStateService:
-    from control_plane.services.messenger import MessengerRuntimeConfig
+    from hub.services.messenger import MessengerRuntimeConfig
 
     return MessengerStateService(
         MessengerRuntimeConfig(
