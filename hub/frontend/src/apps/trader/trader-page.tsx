@@ -361,6 +361,15 @@ function normalizeStrategyPayload(strategy: Record<string, unknown>, enabled: bo
   }
 }
 
+function buildRecentStrategyRecords(records: RecordItem[], strategyId: string | null) {
+  if (!strategyId) {
+    return []
+  }
+  return records
+    .filter((record) => pickText(record.payload, ['strategyId', 'strategy_id', 'strategy']) === strategyId)
+    .slice(0, 4)
+}
+
 function ConfigField({
   label,
   hint,
@@ -421,6 +430,10 @@ export function TraderPage() {
     () => draftStrategy ?? buildConfigDefaults(data, effectiveStrategyId),
     [data, draftStrategy, effectiveStrategyId],
   )
+  const selectedStrategySnapshot = useMemo(
+    () => strategySnapshots.find((item) => item.id === effectiveStrategyId) ?? null,
+    [effectiveStrategyId, strategySnapshots],
+  )
   const selectedRecord = filteredRecords.find((item) => item.id === selectedRecordId) ?? filteredRecords[0] ?? null
   const selectedRecordStrategyId = useMemo(() => pickRecordStrategyId(selectedRecord), [selectedRecord])
   const selectedRecordStrategy = useMemo(
@@ -434,6 +447,10 @@ export function TraderPage() {
   const selectedRecordContextFields = useMemo(
     () => (selectedRecord ? buildRecordContextFields(selectedRecord) : []),
     [selectedRecord],
+  )
+  const recentSelectedStrategyRecords = useMemo(
+    () => buildRecentStrategyRecords(records, effectiveStrategyId),
+    [effectiveStrategyId, records],
   )
   const form = useForm<TraderConfigForm>({
     defaultValues: defaults,
@@ -688,8 +705,71 @@ export function TraderPage() {
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-              <Panel title="执行反馈" description="展示最近一次动作输出和服务日志尾部，便于确认动作是否实际生效。">
+              <Panel title="执行反馈" description="先看当前策略上下文，再看动作输出与日志，判断刚刚的操作影响了什么。">
                 <div className="space-y-4">
+                  <div className="rounded-lg border border-slate-200 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-slate-950">当前策略上下文</div>
+                        <div className="mt-1 text-xs text-slate-500">动作是全局执行的，这里固定对齐到当前选中的策略。</div>
+                      </div>
+                      <Badge variant={selectedStrategySnapshot?.enabled ? 'success' : 'muted'}>
+                        {selectedStrategySnapshot?.enabled ? '启用中' : '未选择 / 已停用'}
+                      </Badge>
+                    </div>
+                    {selectedStrategySnapshot ? (
+                      <div className="mt-4 space-y-3">
+                        <div>
+                          <div className="text-sm font-medium text-slate-900">{selectedStrategySnapshot.name}</div>
+                          <div className="mt-1 text-sm text-slate-600">
+                            {selectedStrategySnapshot.id} · {selectedStrategySnapshot.symbol} · {selectedStrategySnapshot.strategy}
+                          </div>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {[
+                            ['最近动作', selectedStrategySnapshot.lastAction],
+                            ['最近观察', selectedStrategySnapshot.observedAt ?? '-'],
+                            ['持仓数量', String(selectedStrategySnapshot.positionQuantity)],
+                            ['最近结论', selectedStrategySnapshot.lastReason],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-lg bg-slate-50 p-3">
+                              <div className="text-xs text-slate-500">{label}</div>
+                              <div className="mt-1 text-sm text-slate-900">{value}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <div className="text-xs text-slate-500">该策略最近记录</div>
+                          {recentSelectedStrategyRecords.length ? (
+                            <div className="mt-2 space-y-2">
+                              {recentSelectedStrategyRecords.map((record) => (
+                                <button
+                                  key={record.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedRecordId(record.id)
+                                    setTab('records')
+                                  }}
+                                  className="block w-full rounded-lg bg-slate-50 p-3 text-left hover:bg-slate-100"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="text-sm text-slate-900">{record.summary}</div>
+                                    <span className="text-[11px] text-slate-500">{record.kind === 'order' ? '订单' : '信号'}</span>
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-500">{record.timestamp}</div>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="mt-2 text-sm text-slate-500">当前策略还没有最近记录。</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 text-sm text-slate-500">先在配置页选择一个策略，这里会同步展示该策略的最近状态与记录。</div>
+                    )}
+                  </div>
+
                   {[
                     ['最近执行输出', runOnce.data?.stdout],
                     ['启动输出', start.data?.stdout],
