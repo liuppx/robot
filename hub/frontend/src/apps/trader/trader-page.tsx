@@ -89,6 +89,13 @@ type TraderConfigForm = {
   limit_up_threshold_pct: number
 }
 
+type RecordFilter = 'all' | 'signal' | 'order'
+
+type RecordDetailField = {
+  label: string
+  value: string
+}
+
 function displayPath(path: string | undefined) {
   if (!path) {
     return '-'
@@ -197,6 +204,123 @@ function buildConfigDefaults(
   }
 }
 
+function buildNewStrategyDefaults(broker: string): TraderConfigForm {
+  return {
+    broker,
+    id: '',
+    enabled: true,
+    market: 'a-share',
+    symbol: '',
+    name: '',
+    timeframe: '1d',
+    strategy: 'breakout',
+    history_window: 20,
+    breakout_lookback: 5,
+    quantity: 100,
+    position_quantity: 0,
+    max_position: 500,
+    stop_loss_pct: 0.03,
+    take_profit_pct: 0.08,
+    dry_run: true,
+    enable_buy: false,
+    active_lookback_days: 10,
+    active_threshold_pct: 4,
+    breakout_buffer_pct: 0.2,
+    resistance_buffer_pct: 1,
+    afternoon_exit_time: '14:30',
+    limit_up_threshold_pct: 9.8,
+  }
+}
+
+function buildCopiedStrategyDefaults(source: TraderConfigForm): TraderConfigForm {
+  const nextId = source.id ? `${source.id}-copy` : ''
+  return {
+    ...source,
+    id: nextId,
+    name: source.name ? `${source.name} 副本` : '',
+    enabled: false,
+  }
+}
+
+function buildRecordDetailFields(record: RecordItem): RecordDetailField[] {
+  const payload = record.payload
+  if (record.kind === 'signal') {
+    return [
+      { label: '策略 ID', value: pickText(payload, ['strategyId', 'strategy_id', 'strategy']) },
+      { label: '动作', value: pickText(payload, ['action', 'signal', 'decision']) },
+      { label: '标的', value: pickText(payload, ['symbol', 'code', 'name']) },
+      { label: '价格', value: pickText(payload, ['price', 'lastPrice', 'latestPrice']) },
+      { label: '时间', value: pickText(payload, ['ts', 'timestamp', 'created_at', 'time']) },
+      { label: '原因', value: pickText(payload, ['reason', 'message', 'note']) },
+    ]
+  }
+
+  return [
+    { label: '策略 ID', value: pickText(payload, ['strategyId', 'strategy_id', 'strategy']) },
+    { label: '方向', value: pickText(payload, ['side', 'action']) },
+    { label: '状态', value: pickText(payload, ['status', 'result']) },
+    { label: '标的', value: pickText(payload, ['symbol', 'code', 'name']) },
+    { label: '数量', value: pickText(payload, ['quantity', 'qty', 'filledQuantity']) },
+    { label: '券商', value: pickText(payload, ['broker', 'account', 'accountId']) },
+    { label: '订单号', value: pickText(payload, ['orderId', 'order_id', 'id']) },
+    { label: '时间', value: pickText(payload, ['ts', 'timestamp', 'created_at', 'time']) },
+    { label: '原因', value: pickText(payload, ['reason', 'message', 'note']) },
+  ]
+}
+
+function pickRecordStrategyId(record: RecordItem | null): string | null {
+  if (!record) {
+    return null
+  }
+  const strategyId = pickText(record.payload, ['strategyId', 'strategy_id', 'strategy'])
+  return strategyId === '-' ? null : strategyId
+}
+
+function buildRecordContextFields(record: RecordItem): RecordDetailField[] {
+  const payload = record.payload
+  const ignoredKeys = new Set([
+    'strategyId',
+    'strategy_id',
+    'strategy',
+    'action',
+    'signal',
+    'decision',
+    'side',
+    'status',
+    'result',
+    'symbol',
+    'code',
+    'name',
+    'price',
+    'lastPrice',
+    'latestPrice',
+    'quantity',
+    'qty',
+    'filledQuantity',
+    'broker',
+    'account',
+    'accountId',
+    'orderId',
+    'order_id',
+    'id',
+    'ts',
+    'timestamp',
+    'created_at',
+    'time',
+    'reason',
+    'message',
+    'note',
+  ])
+
+  return Object.entries(payload)
+    .filter(([key]) => !ignoredKeys.has(key))
+    .slice(0, 8)
+    .map(([key, value]) => ({
+      label: key,
+      value: typeof value === 'string' ? value : JSON.stringify(value),
+    }))
+}
+
 function ConfigField({
   label,
   hint,
@@ -225,8 +349,15 @@ export function TraderPage() {
   const strategySnapshots = useMemo(() => buildStrategySnapshots(data), [data])
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
+  const [draftStrategy, setDraftStrategy] = useState<TraderConfigForm | null>(null)
+  const [recordFilter, setRecordFilter] = useState<RecordFilter>('all')
   const [tab, setTab] = useState('overview')
-  const selectedRecord = records.find((item) => item.id === selectedRecordId) ?? records[0] ?? null
+  const filteredRecords = useMemo(() => {
+    if (recordFilter === 'all') {
+      return records
+    }
+    return records.filter((item) => item.kind === recordFilter)
+  }, [recordFilter, records])
   const strategyOptions = useMemo(
     () =>
       ((data?.strategies ?? []) as Array<Record<string, unknown>>).map((item, index) => ({
@@ -238,7 +369,24 @@ export function TraderPage() {
     [data],
   )
   const effectiveStrategyId = selectedStrategyId ?? strategyOptions[0]?.id ?? null
-  const defaults = useMemo(() => buildConfigDefaults(data, effectiveStrategyId), [data, effectiveStrategyId])
+  const defaults = useMemo(
+    () => draftStrategy ?? buildConfigDefaults(data, effectiveStrategyId),
+    [data, draftStrategy, effectiveStrategyId],
+  )
+  const selectedRecord = filteredRecords.find((item) => item.id === selectedRecordId) ?? filteredRecords[0] ?? null
+  const selectedRecordStrategyId = useMemo(() => pickRecordStrategyId(selectedRecord), [selectedRecord])
+  const selectedRecordStrategy = useMemo(
+    () => strategySnapshots.find((item) => item.id === selectedRecordStrategyId) ?? null,
+    [selectedRecordStrategyId, strategySnapshots],
+  )
+  const selectedRecordFields = useMemo(
+    () => (selectedRecord ? buildRecordDetailFields(selectedRecord) : []),
+    [selectedRecord],
+  )
+  const selectedRecordContextFields = useMemo(
+    () => (selectedRecord ? buildRecordContextFields(selectedRecord) : []),
+    [selectedRecord],
+  )
   const form = useForm<TraderConfigForm>({
     defaultValues: defaults,
   })
@@ -256,8 +404,35 @@ export function TraderPage() {
   }, [selectedStrategyId, strategyOptions])
 
   useEffect(() => {
+    setSelectedRecordId((currentId) => {
+      if (!filteredRecords.length) {
+        return null
+      }
+      if (currentId && filteredRecords.some((item) => item.id === currentId)) {
+        return currentId
+      }
+      return filteredRecords[0].id
+    })
+  }, [filteredRecords])
+
+  useEffect(() => {
     form.reset(defaults)
   }, [defaults, form])
+
+  function selectSavedStrategy(strategyId: string) {
+    setDraftStrategy(null)
+    setSelectedStrategyId(strategyId)
+  }
+
+  function createStrategyDraft() {
+    setSelectedStrategyId(null)
+    setDraftStrategy(buildNewStrategyDefaults(data?.broker ?? 'paper'))
+  }
+
+  function duplicateCurrentStrategy() {
+    setSelectedStrategyId(null)
+    setDraftStrategy(buildCopiedStrategyDefaults(form.getValues()))
+  }
 
   const cards: MetricCard[] = [
     { label: '可用性', value: data?.available ? '可用' : '缺失', hint: '机器人与运行目录状态', icon: Bot },
@@ -271,7 +446,7 @@ export function TraderPage() {
   async function onSubmit(values: TraderConfigForm) {
     await saveConfig.mutateAsync({
       broker: values.broker,
-      strategy_id: effectiveStrategyId,
+      strategy_id: draftStrategy ? null : effectiveStrategyId,
       strategy: {
         id: values.id,
         enabled: values.enabled,
@@ -297,6 +472,8 @@ export function TraderPage() {
         limit_up_threshold_pct: values.limit_up_threshold_pct,
       },
     })
+    setDraftStrategy(null)
+    setSelectedStrategyId(values.id)
   }
 
   const actionError = runOnce.error?.message || start.error?.message || stop.error?.message || saveConfig.error?.message
@@ -511,15 +688,34 @@ export function TraderPage() {
           <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
             <Panel title="策略列表" description="先选择要编辑的策略，再在右侧修改参数。">
               <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" onClick={createStrategyDraft}>
+                    新建策略
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={duplicateCurrentStrategy}>
+                    复制当前
+                  </Button>
+                </div>
+                {draftStrategy ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-medium text-amber-950">
+                        {draftStrategy.id ? `新草稿 · ${draftStrategy.id}` : '新草稿'}
+                      </div>
+                      <Badge variant="muted">未保存</Badge>
+                    </div>
+                    <div className="mt-2 text-xs text-amber-800">当前右侧表单处于新增或复制状态，保存后会追加到策略列表。</div>
+                  </div>
+                ) : null}
                 {strategyOptions.length ? (
                   strategyOptions.map((strategy) => (
                     <button
                       key={strategy.id}
                       type="button"
-                      onClick={() => setSelectedStrategyId(strategy.id)}
+                      onClick={() => selectSavedStrategy(strategy.id)}
                       className={cn(
                         'block w-full rounded-lg border p-4 text-left transition',
-                        effectiveStrategyId === strategy.id
+                        !draftStrategy && effectiveStrategyId === strategy.id
                           ? 'border-sky-300 bg-sky-50'
                           : 'border-slate-200 bg-white hover:border-slate-300',
                       )}
@@ -542,7 +738,10 @@ export function TraderPage() {
               </div>
             </Panel>
 
-            <Panel title="策略配置" description="按当前选中的策略保存，不覆盖其他策略。">
+            <Panel
+              title="策略配置"
+              description={draftStrategy ? '当前是新增草稿。保存后会作为新策略写入，不影响已有策略。' : '按当前选中的策略保存，不覆盖其他策略。'}
+            >
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <ConfigField label="券商通道">
@@ -637,13 +836,27 @@ export function TraderPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <Button type="submit" disabled={saveConfig.isPending || !effectiveStrategyId}>
+                  <Button type="submit" disabled={saveConfig.isPending}>
                     <Save className="h-4 w-4" />
-                    {saveConfig.isPending ? '保存中...' : '保存配置'}
+                    {saveConfig.isPending ? '保存中...' : draftStrategy ? '保存为新策略' : '保存配置'}
                   </Button>
                   <Button type="button" variant="outline" onClick={() => form.reset(defaults)}>
                     重置
                   </Button>
+                  {draftStrategy ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setDraftStrategy(null)
+                        if (strategyOptions[0]) {
+                          setSelectedStrategyId(strategyOptions[0].id)
+                        }
+                      }}
+                    >
+                      取消草稿
+                    </Button>
+                  ) : null}
                   {saveConfig.data?.saved ? (
                     <span className="text-sm text-emerald-700">
                       已保存到 {saveConfig.data.broker}，策略数 {saveConfig.data.strategyCount}
@@ -657,11 +870,27 @@ export function TraderPage() {
 
         <TabsContent value="records">
           <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-            <Panel title="运行记录" description="先看列表，再查看单条记录详情。">
-              <ScrollArea className="h-[620px] pr-3">
+            <Panel title="运行记录" description="按全部、信号、订单切换，再查看单条记录详情。">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <Tabs value={recordFilter} onValueChange={(value) => setRecordFilter(value as RecordFilter)}>
+                  <TabsList className="h-10">
+                    <TabsTrigger value="all" className="min-w-[72px]">
+                      全部 {records.length}
+                    </TabsTrigger>
+                    <TabsTrigger value="signal" className="min-w-[72px]">
+                      信号 {records.filter((item) => item.kind === 'signal').length}
+                    </TabsTrigger>
+                    <TabsTrigger value="order" className="min-w-[72px]">
+                      订单 {records.filter((item) => item.kind === 'order').length}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <div className="text-xs text-slate-500">当前列表 {filteredRecords.length} 条</div>
+              </div>
+              <ScrollArea className="h-[560px] pr-3">
                 <div className="space-y-3">
-                  {records.length ? (
-                    records.map((record) => (
+                  {filteredRecords.length ? (
+                    filteredRecords.map((record) => (
                       <button
                         key={record.id}
                         type="button"
@@ -685,40 +914,99 @@ export function TraderPage() {
                     ))
                   ) : (
                     <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-                      还没有最近记录。先执行一次，或等待常驻服务写入数据。
+                      当前筛选下还没有记录。先执行一次，或切换到其他记录类型。
                     </div>
                   )}
                 </div>
               </ScrollArea>
             </Panel>
 
-            <Panel title="记录详情" description="按结构化字段和原始 JSON 双视图展示。">
+            <Panel title="记录详情" description="先看关键信息和关联策略，再查看上下文与原始 JSON。">
               {selectedRecord ? (
                 <div className="space-y-4">
                   <div className="rounded-lg bg-slate-50 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <div className="text-base font-semibold text-slate-950">{selectedRecord.title}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-base font-semibold text-slate-950">{selectedRecord.title}</div>
+                          <Badge variant={selectedRecord.kind === 'order' ? 'default' : 'muted'}>
+                            {selectedRecord.kind === 'order' ? '订单' : '信号'}
+                          </Badge>
+                        </div>
                         <div className="mt-1 text-sm text-slate-600">{selectedRecord.summary}</div>
                       </div>
                       <div className="text-xs text-slate-500">{selectedRecord.timestamp}</div>
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {Object.entries(selectedRecord.payload).slice(0, 8).map(([key, value]) => (
-                      <div key={key} className="rounded-lg border border-slate-200 p-4">
-                        <div className="text-xs text-slate-500">{key}</div>
-                        <div className="mt-2 break-all text-sm text-slate-900">
-                          {typeof value === 'string' ? value : JSON.stringify(value)}
-                        </div>
+
+                  <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+                    <div className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {selectedRecordFields.map((item) => (
+                          <div key={item.label} className="rounded-lg border border-slate-200 p-4">
+                            <div className="text-xs text-slate-500">{item.label}</div>
+                            <div className="mt-2 break-all text-sm font-medium text-slate-900">{item.value}</div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="rounded-lg bg-slate-950 p-4">
-                    <div className="mb-2 text-xs text-slate-400">原始记录</div>
-                    <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-slate-100">
-                      {JSON.stringify(selectedRecord.payload, null, 2)}
-                    </pre>
+
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="text-sm font-medium text-slate-950">上下文字段</div>
+                        {selectedRecordContextFields.length ? (
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            {selectedRecordContextFields.map((item) => (
+                              <div key={item.label} className="rounded-lg bg-slate-50 p-3">
+                                <div className="text-xs text-slate-500">{item.label}</div>
+                                <div className="mt-1 break-all text-sm text-slate-900">{item.value}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-sm text-slate-500">当前记录没有额外上下文字段。</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="rounded-lg border border-slate-200 p-4">
+                        <div className="text-sm font-medium text-slate-950">关联策略</div>
+                        {selectedRecordStrategy ? (
+                          <div className="mt-3 space-y-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-medium text-slate-900">{selectedRecordStrategy.name}</div>
+                              <Badge variant={selectedRecordStrategy.enabled ? 'success' : 'muted'}>
+                                {selectedRecordStrategy.enabled ? '启用中' : '已停用'}
+                              </Badge>
+                            </div>
+                            <div className="text-sm text-slate-600">
+                              {selectedRecordStrategy.id} · {selectedRecordStrategy.symbol} · {selectedRecordStrategy.strategy}
+                            </div>
+                            <div className="grid gap-3">
+                              {[
+                                ['最近动作', selectedRecordStrategy.lastAction],
+                                ['最近观察', selectedRecordStrategy.observedAt ?? '-'],
+                                ['持仓数量', String(selectedRecordStrategy.positionQuantity)],
+                                ['风险结果', selectedRecordStrategy.riskOk == null ? '-' : selectedRecordStrategy.riskOk ? '通过' : '未通过'],
+                              ].map(([label, value]) => (
+                                <div key={label} className="rounded-lg bg-slate-50 p-3">
+                                  <div className="text-xs text-slate-500">{label}</div>
+                                  <div className="mt-1 text-sm text-slate-900">{value}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-sm text-slate-500">当前记录没有匹配到策略摘要，可能是旧记录或策略已变更。</div>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg bg-slate-950 p-4">
+                        <div className="mb-2 text-xs text-slate-400">原始记录</div>
+                        <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-slate-100">
+                          {JSON.stringify(selectedRecord.payload, null, 2)}
+                        </pre>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : (
