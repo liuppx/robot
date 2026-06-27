@@ -22,8 +22,8 @@ fi
 
 bash "$ROOT_DIR/scripts/starter.sh" start
 
-echo "[step] runtime status"
-bash "$ROOT_DIR/scripts/status_full_stack.sh"
+echo "[step] health check"
+curl -sS "http://${HUB_BIND_ADDR:-127.0.0.1:3900}/api/v1/public/health" || true
 
 echo "[step] doctor checks"
 if ! bash "$ROOT_DIR/scripts/doctor_full_stack.sh"; then

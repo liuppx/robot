@@ -33,6 +33,22 @@ hub/backend/
 
 当前目录已经接管默认运行入口。
 
+## 本地开发
+
+```bash
+cd hub/backend
+uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
+```
+
+部署或打包后的启动、停止、重启统一使用仓库根目录下的 `scripts/starter.sh`。
+
+## 测试
+
+```bash
+cd hub/backend
+uv run python -m unittest discover -s tests
+```
+
 后续迁移建议：
 
 1. 继续收敛控制面脚本和打包链路

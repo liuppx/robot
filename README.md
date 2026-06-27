@@ -123,7 +123,28 @@ bash scripts/setup/openclaw_prepare.sh configure
 bash scripts/setup/openclaw_prepare.sh patch
 ```
 
-### 运行项目
+### 开发模式运行
+
+开发阶段建议前后端分进程启动，方便热更新和调试：
+
+```bash
+# backend: http://127.0.0.1:3900
+cd hub/backend
+uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
+```
+
+```bash
+# frontend: http://127.0.0.1:5173
+cd hub/frontend
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Vite 开发服务器会把 `/api` 代理到 `http://127.0.0.1:3900`。
+
+### 打包/部署后运行
+
+打包或部署后的生命周期操作统一使用 `scripts/starter.sh`：
 
 ```bash
 bash scripts/starter.sh start
@@ -136,9 +157,6 @@ bash scripts/starter.sh stop
 ```bash
 # 基础体检
 bash scripts/doctor_full_stack.sh
-
-# 服务状态（兼容入口）
-bash scripts/status_full_stack.sh
 
 # 健康接口
 curl -sS http://127.0.0.1:3900/api/v1/public/health
@@ -205,13 +223,23 @@ curl -sS http://127.0.0.1:3900/api/v1/public/version
 ## 测试
 
 ```bash
-# 1) 启动可用
+# 后端测试
+cd hub/backend
+uv run python -m unittest discover -s tests
+
+# 前端构建
+cd ../frontend
+npm run build
+```
+
+```bash
+# 启动可用
 bash scripts/starter.sh start
 
-# 2) 健康可用
+# 健康可用
 curl -sS http://127.0.0.1:3900/api/v1/public/health
 
-# 3) 页面可访问
+# 页面可访问
 curl -sSI http://127.0.0.1:3900/ | head -n 5
 ```
 

@@ -72,13 +72,36 @@ bash scripts/starter.sh stop
 bash scripts/starter.sh restart
 ```
 
-## 5. 兼容入口（已降级）
+## 5. 本地开发
 
-以下脚本仍可用，但仅做兼容转发，不再是主路径：
+开发阶段建议前后端分进程启动：
 
-- `scripts/run_full_stack.sh`
-- `scripts/stop_full_stack.sh`
-- `scripts/status_full_stack.sh`
+```bash
+cd hub/backend
+uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
+```
+
+```bash
+cd hub/frontend
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+前端开发服务器会把 `/api` 代理到 `http://127.0.0.1:3900`。
+
+打包或部署后的生命周期操作统一使用 `scripts/starter.sh`。
+
+测试命令：
+
+```bash
+cd hub/backend
+uv run python -m unittest discover -s tests
+```
+
+```bash
+cd hub/frontend
+npm run build
+```
 
 ## 6. 核心接口分层
 
@@ -120,8 +143,8 @@ bash scripts/starter.sh restart
 ### Q1: 浏览器打开 127.0.0.1:3900 连接被拒绝
 
 ```bash
-bash scripts/status_full_stack.sh
 bash scripts/starter.sh start
+curl -sS http://127.0.0.1:3900/api/v1/public/health
 ```
 
 ### Q2: 模型拉取失败

@@ -11,6 +11,27 @@ APP_ENV_FILE="$APP_DIR/.env"
 
 SKIP_OPENCLAW_INSTALL="${SKIP_OPENCLAW_INSTALL:-0}"
 
+upsert_env_value() {
+  local key="$1"
+  local value="$2"
+  local file="$3"
+  local tmp_file
+
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/hub-env.XXXXXX")"
+  if [[ -f "$file" ]] && grep -q "^${key}=" "$file"; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        "${key}="*) printf '%s=%s\n' "$key" "$value" ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done < "$file" > "$tmp_file"
+    mv "$tmp_file" "$file"
+  else
+    rm -f "$tmp_file"
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
 echo "[step] bootstrap hub"
 if [[ -x "$APP_DIR/.venv/bin/robot-hub" ]]; then
   echo "[ok] python hub already prepared: $APP_DIR/.venv/bin/robot-hub"
@@ -64,11 +85,7 @@ else
 fi
 
 if [[ -n "${ROUTER_API_KEY:-}" ]]; then
-  if grep -q '^ROUTER_API_KEY=' "$ENV_FILE"; then
-    sed -i "s|^ROUTER_API_KEY=.*$|ROUTER_API_KEY=${ROUTER_API_KEY}|" "$ENV_FILE"
-  else
-    echo "ROUTER_API_KEY=${ROUTER_API_KEY}" >> "$ENV_FILE"
-  fi
+  upsert_env_value "ROUTER_API_KEY" "$ROUTER_API_KEY" "$ENV_FILE"
   echo "[ok] injected ROUTER_API_KEY into $ENV_FILE from current shell env"
 fi
 
