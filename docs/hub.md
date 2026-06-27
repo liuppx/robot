@@ -30,19 +30,11 @@ scripts/
   starter.sh
   package.sh
   bootstrap_full_stack.sh
-  deploy_full_stack.sh
   doctor_full_stack.sh
   setup/openclaw_prepare.sh
 ```
 
 ## 3. 启动（推荐）
-
-```bash
-cd /home/administrator/code/hub
-bash scripts/deploy_full_stack.sh
-```
-
-或分步执行：
 
 ```bash
 cd /home/administrator/code/hub
@@ -76,10 +68,14 @@ bash scripts/starter.sh restart
 
 开发阶段建议前后端分进程启动：
 
+启动 backend：
+
 ```bash
 cd hub/backend
 uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
 ```
+
+启动 frontend：
 
 ```bash
 cd hub/frontend
@@ -88,6 +84,16 @@ npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
 前端开发服务器会把 `/api` 代理到 `http://127.0.0.1:3900`。
+
+停止开发服务：
+
+- 正常停止：在 backend 和 frontend 各自终端里按 `Ctrl+C`
+- 如果端口被旧进程占用，可手动清理：
+
+```bash
+lsof -tiTCP:3900 -sTCP:LISTEN | xargs kill
+lsof -tiTCP:5173 -sTCP:LISTEN | xargs kill
+```
 
 打包或部署后的生命周期操作统一使用 `scripts/starter.sh`。
 

@@ -35,9 +35,17 @@ hub/backend/
 
 ## 本地开发
 
+启动：
+
 ```bash
 cd hub/backend
 uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
+```
+
+停止：在运行 backend 的终端里按 `Ctrl+C`。如果端口被旧进程占用，可执行：
+
+```bash
+lsof -tiTCP:3900 -sTCP:LISTEN | xargs kill
 ```
 
 部署或打包后的启动、停止、重启统一使用仓库根目录下的 `scripts/starter.sh`。
