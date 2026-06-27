@@ -27,6 +27,78 @@ import {
 import { ConfigField, StrategyBooleanToggles } from './trader-form-components'
 import type { RecordFilter, TraderConfigForm } from './trader-helpers'
 
+function CompactFieldList({
+  items,
+}: {
+  items: Array<{ label: string; value: string; valueClassName?: string }>
+}) {
+  return (
+    <div className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center sm:gap-4"
+        >
+          <div className="text-xs text-slate-500">{item.label}</div>
+          <div className={cn('min-w-0 break-all text-sm text-slate-900', item.valueClassName)}>{item.value}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RecordTable({
+  strategyId,
+  records,
+}: {
+  strategyId: string
+  records: Array<{
+    id: string
+    kind: 'signal' | 'order'
+    title: string
+    summary: string
+    timestamp: string
+  }>
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200">
+      <div className="hidden grid-cols-[168px_minmax(0,1fr)_96px_176px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500 md:grid">
+        <div>时间</div>
+        <div>记录</div>
+        <div>类型</div>
+        <div>操作</div>
+      </div>
+      <div className="divide-y divide-slate-200">
+        {records.map((record) => (
+          <div key={record.id} className="px-4 py-3">
+            <div className="grid gap-3 md:grid-cols-[168px_minmax(0,1fr)_96px_176px] md:items-center md:gap-4">
+              <div className="text-xs text-slate-500 md:text-sm">{formatBrowserDateTime(record.timestamp)}</div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-slate-900">{record.title}</div>
+                <div className="mt-1 truncate text-sm text-slate-600">{record.summary}</div>
+              </div>
+              <div>
+                <Badge variant={record.kind === 'order' ? 'default' : 'muted'}>
+                  {record.kind === 'order' ? '订单' : '信号'}
+                </Badge>
+              </div>
+              <div>
+                <Link
+                  to="/robots/trader/$strategyId/records/$recordId"
+                  params={{ strategyId, recordId: record.id }}
+                  className="text-sm font-medium text-sky-700 hover:text-sky-800"
+                >
+                  查看详情
+                </Link>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function TraderStrategyPage() {
   const { strategyId } = useParams({ strict: false }) as { strategyId?: string }
   const navigate = useNavigate()
@@ -151,34 +223,51 @@ export function TraderStrategyPage() {
 
       <Panel title="当前策略" description="这里不再重复放大一排大卡片，只保留单策略当前最关键的信息。">
         {selectedStrategySnapshot ? (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <Badge variant={selectedStrategySnapshot.enabled ? 'success' : 'muted'}>
-                {selectedStrategySnapshot.enabled ? '启用中' : '已停用'}
-              </Badge>
-              <Badge
-                variant={
-                  selectedStrategySnapshot.lastAction === 'buy' || selectedStrategySnapshot.lastAction === 'sell' ? 'default' : 'muted'
-                }
-              >
-                {selectedStrategySnapshot.lastAction}
-              </Badge>
-              <span className="text-sm text-slate-600">
-                {selectedStrategySnapshot.id} · {selectedStrategySnapshot.symbol} · {selectedStrategySnapshot.strategy}
-              </span>
-            </div>
-            <div className="grid gap-3 md:grid-cols-4">
-              {[
-                ['最近观察', formatBrowserDateTime(selectedStrategySnapshot.observedAt)],
-                ['最新价格', selectedStrategySnapshot.latestPrice == null ? '-' : selectedStrategySnapshot.latestPrice.toFixed(3)],
-                ['持仓数量', String(selectedStrategySnapshot.positionQuantity)],
-                ['风险结果', selectedStrategySnapshot.riskOk == null ? '-' : selectedStrategySnapshot.riskOk ? '通过' : '未通过'],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-slate-50 p-4">
-                  <div className="text-xs text-slate-500">{label}</div>
-                  <div className="mt-2 text-sm font-medium text-slate-900">{value}</div>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <CompactFieldList
+              items={[
+                { label: '策略名称', value: selectedStrategySnapshot.name },
+                { label: '策略 ID', value: selectedStrategySnapshot.id },
+                { label: '标的', value: selectedStrategySnapshot.symbol },
+                { label: '策略类型', value: selectedStrategySnapshot.strategy },
+                { label: '周期', value: selectedStrategySnapshot.timeframe },
+                { label: '最近观察', value: formatBrowserDateTime(selectedStrategySnapshot.observedAt) },
+                {
+                  label: '最新价格',
+                  value:
+                    selectedStrategySnapshot.latestPrice == null ? '-' : selectedStrategySnapshot.latestPrice.toFixed(3),
+                },
+              ]}
+            />
+            <div className="space-y-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs text-slate-500">状态</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge variant={selectedStrategySnapshot.enabled ? 'success' : 'muted'}>
+                    {selectedStrategySnapshot.enabled ? '启用中' : '已停用'}
+                  </Badge>
+                  <Badge
+                    variant={
+                      selectedStrategySnapshot.lastAction === 'buy' || selectedStrategySnapshot.lastAction === 'sell'
+                        ? 'default'
+                        : 'muted'
+                    }
+                  >
+                    {selectedStrategySnapshot.lastAction}
+                  </Badge>
                 </div>
-              ))}
+              </div>
+              <CompactFieldList
+                items={[
+                  { label: '持仓数量', value: String(selectedStrategySnapshot.positionQuantity) },
+                  {
+                    label: '风险结果',
+                    value:
+                      selectedStrategySnapshot.riskOk == null ? '-' : selectedStrategySnapshot.riskOk ? '通过' : '未通过',
+                  },
+                  { label: '风险说明', value: selectedStrategySnapshot.riskReason ?? '-' },
+                ]}
+              />
             </div>
           </div>
         ) : (
@@ -196,61 +285,35 @@ export function TraderStrategyPage() {
         <TabsContent value="status">
           <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
             <Panel title="运行摘要" description="这里保留全局运行摘要，帮助判断本轮 run_once 的范围和结果。">
-              <div className="grid gap-3 md:grid-cols-3">
-                {[
-                  ['最近执行动作', data?.last_action || '-'],
-                  ['最近运行时间', formatBrowserDateTime(data?.last_run_at)],
-                  ['最近评估策略', String(data?.last_cycle_strategy_count ?? 0)],
-                  ['最近数据请求', String(data?.last_cycle_request_count ?? 0)],
-                  ['最近信号', formatBrowserDateTime(data?.last_signal_at)],
-                  ['最近订单', formatBrowserDateTime(data?.last_order_at)],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-lg bg-slate-50 p-4">
-                    <div className="text-xs text-slate-500">{label}</div>
-                    <div className="mt-2 text-sm font-medium text-slate-900">{value}</div>
-                  </div>
-                ))}
-              </div>
+              <CompactFieldList
+                items={[
+                  { label: '最近执行动作', value: data?.last_action || '-' },
+                  { label: '最近运行时间', value: formatBrowserDateTime(data?.last_run_at) },
+                  { label: '最近评估策略', value: String(data?.last_cycle_strategy_count ?? 0) },
+                  { label: '最近数据请求', value: String(data?.last_cycle_request_count ?? 0) },
+                  { label: '最近信号', value: formatBrowserDateTime(data?.last_signal_at) },
+                  { label: '最近订单', value: formatBrowserDateTime(data?.last_order_at) },
+                ]}
+              />
             </Panel>
 
             <Panel title="当前策略影响" description="固定聚焦当前策略，而不是在大工作台里和其他策略混看。">
               {selectedStrategySnapshot ? (
                 <div className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-4">
-                    {[
-                      ['最近动作', selectedStrategySnapshot.lastAction],
-                      ['最近观察', formatBrowserDateTime(selectedStrategySnapshot.observedAt)],
-                      ['持仓数量', String(selectedStrategySnapshot.positionQuantity)],
-                      ['关联记录', String(currentStrategyRecords.length)],
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded-lg bg-slate-50 p-4">
-                        <div className="text-xs text-slate-500">{label}</div>
-                        <div className="mt-2 text-sm text-slate-900">{value}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-4">
-                    <div className="text-xs text-slate-500">最近结论</div>
-                    <div className="mt-2 text-sm text-slate-900">{selectedStrategySnapshot.lastReason}</div>
-                  </div>
+                  <CompactFieldList
+                    items={[
+                      { label: '最近动作', value: selectedStrategySnapshot.lastAction },
+                      { label: '最近观察', value: formatBrowserDateTime(selectedStrategySnapshot.observedAt) },
+                      { label: '持仓数量', value: String(selectedStrategySnapshot.positionQuantity) },
+                      { label: '关联记录', value: String(currentStrategyRecords.length) },
+                      { label: '最近结论', value: selectedStrategySnapshot.lastReason },
+                    ]}
+                  />
                   <div>
                     <div className="text-sm font-medium text-slate-950">最近记录</div>
                     {recentSelectedStrategyRecords.length ? (
-                      <div className="mt-3 space-y-2">
-                        {recentSelectedStrategyRecords.map((record) => (
-                          <Link
-                            key={record.id}
-                            to="/robots/trader/$strategyId/records/$recordId"
-                            params={{ strategyId: effectiveStrategyId ?? '', recordId: record.id }}
-                            className="block rounded-lg bg-slate-50 p-3 hover:bg-slate-100"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm text-slate-900">{record.summary}</div>
-                              <span className="text-[11px] text-slate-500">{record.kind === 'order' ? '订单' : '信号'}</span>
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">{formatBrowserDateTime(record.timestamp)}</div>
-                          </Link>
-                        ))}
+                      <div className="mt-3">
+                        <RecordTable strategyId={effectiveStrategyId ?? ''} records={recentSelectedStrategyRecords} />
                       </div>
                     ) : (
                       <div className="mt-3 text-sm text-slate-500">当前策略还没有最近记录。</div>
@@ -284,23 +347,7 @@ export function TraderStrategyPage() {
             </div>
             <div className="space-y-3">
               {filteredCurrentStrategyRecords.length ? (
-                filteredCurrentStrategyRecords.map((record) => (
-                  <Link
-                    key={record.id}
-                    to="/robots/trader/$strategyId/records/$recordId"
-                    params={{ strategyId: effectiveStrategyId ?? '', recordId: record.id }}
-                    className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-300"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-medium text-slate-900">{record.title}</div>
-                      <Badge variant={record.kind === 'order' ? 'default' : 'muted'}>
-                        {record.kind === 'order' ? '订单' : '信号'}
-                      </Badge>
-                    </div>
-                    <div className="mt-2 text-sm text-slate-600">{record.summary}</div>
-                    <div className="mt-2 text-xs text-slate-500">{formatBrowserDateTime(record.timestamp)}</div>
-                  </Link>
-                ))
+                <RecordTable strategyId={effectiveStrategyId ?? ''} records={filteredCurrentStrategyRecords} />
               ) : (
                 <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
                   当前策略在所选筛选下没有记录。
