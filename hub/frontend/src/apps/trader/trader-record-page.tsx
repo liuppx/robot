@@ -13,6 +13,26 @@ import {
   pickRecordStrategyId,
 } from './trader-helpers'
 
+function CompactFieldList({
+  items,
+}: {
+  items: Array<{ label: string; value: string }>
+}) {
+  return (
+    <div className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="grid gap-1 px-4 py-3 sm:grid-cols-[120px_minmax(0,1fr)] sm:items-center sm:gap-4"
+        >
+          <div className="text-xs text-slate-500">{item.label}</div>
+          <div className="min-w-0 break-all text-sm text-slate-900">{item.value}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function TraderRecordPage() {
   const params = useParams({ strict: false }) as { strategyId?: string; recordId?: string }
   const strategyId = params.strategyId ?? null
@@ -52,9 +72,9 @@ export function TraderRecordPage() {
       <Panel title="记录" description="先看关键信息，再看上下文和原始 JSON。">
         {record ? (
           <div className="space-y-4">
-            <div className="rounded-lg bg-slate-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-base font-semibold text-slate-950">{record.title}</div>
                     <Badge variant={record.kind === 'order' ? 'default' : 'muted'}>
@@ -69,24 +89,15 @@ export function TraderRecordPage() {
 
             <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
               <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2">
-                  {detailFields.map((item) => (
-                    <div key={item.label} className="rounded-lg border border-slate-200 p-4">
-                      <div className="text-xs text-slate-500">{item.label}</div>
-                      <div className="mt-2 break-all text-sm font-medium text-slate-900">{item.value}</div>
-                    </div>
-                  ))}
+                <div>
+                  <div className="mb-3 text-sm font-medium text-slate-950">关键信息</div>
+                  <CompactFieldList items={detailFields} />
                 </div>
                 <div className="rounded-lg border border-slate-200 p-4">
                   <div className="text-sm font-medium text-slate-950">上下文字段</div>
                   {contextFields.length ? (
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      {contextFields.map((item) => (
-                        <div key={item.label} className="rounded-lg bg-slate-50 p-3">
-                          <div className="text-xs text-slate-500">{item.label}</div>
-                          <div className="mt-1 break-all text-sm text-slate-900">{item.value}</div>
-                        </div>
-                      ))}
+                    <div className="mt-3">
+                      <CompactFieldList items={contextFields} />
                     </div>
                   ) : (
                     <div className="mt-3 text-sm text-slate-500">当前记录没有额外上下文字段。</div>
@@ -105,20 +116,27 @@ export function TraderRecordPage() {
                           {selectedRecordStrategy.enabled ? '启用中' : '已停用'}
                         </Badge>
                       </div>
-                      <div className="text-sm text-slate-600">
-                        {selectedRecordStrategy.id} · {selectedRecordStrategy.symbol} · {selectedRecordStrategy.strategy}
-                      </div>
+                      <CompactFieldList
+                        items={[
+                          { label: '策略 ID', value: selectedRecordStrategy.id },
+                          { label: '标的', value: selectedRecordStrategy.symbol },
+                          { label: '策略类型', value: selectedRecordStrategy.strategy },
+                          { label: '最近动作', value: selectedRecordStrategy.lastAction },
+                        ]}
+                      />
                     </div>
                   ) : (
                     <div className="mt-3 text-sm text-slate-500">当前记录没有匹配到策略摘要。</div>
                   )}
                 </div>
-                <div className="rounded-lg bg-slate-950 p-4">
-                  <div className="mb-2 text-xs text-slate-400">原始记录</div>
-                  <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-slate-100">
+                <details className="rounded-lg border border-slate-200 bg-slate-950 p-4">
+                  <summary className="cursor-pointer list-none text-sm font-medium text-slate-100">
+                    原始记录 JSON
+                  </summary>
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs text-slate-100">
                     {JSON.stringify(record.payload, null, 2)}
                   </pre>
-                </div>
+                </details>
               </div>
             </div>
           </div>
