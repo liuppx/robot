@@ -63,6 +63,17 @@ type StrategySnapshot = {
   positionQuantity: number
 }
 
+type StrategyOption = {
+  id: string
+  name: string
+  symbol: string
+  enabled: boolean
+  lastAction: string
+  observedAt: string | null
+  positionQuantity: number
+  payload: Record<string, unknown>
+}
+
 type TraderConfigForm = {
   broker: string
   id: string
@@ -321,6 +332,35 @@ function buildRecordContextFields(record: RecordItem): RecordDetailField[] {
     }))
 }
 
+function normalizeStrategyPayload(strategy: Record<string, unknown>, enabled: boolean) {
+  return {
+    ...strategy,
+    id: pickText(strategy, ['id']) === '-' ? '' : pickText(strategy, ['id']),
+    enabled,
+    market: pickText(strategy, ['market']) === '-' ? 'a-share' : pickText(strategy, ['market']),
+    symbol: pickText(strategy, ['symbol']) === '-' ? '' : pickText(strategy, ['symbol']),
+    name: pickText(strategy, ['name']) === '-' ? '' : pickText(strategy, ['name']),
+    timeframe: pickText(strategy, ['timeframe']) === '-' ? '1d' : pickText(strategy, ['timeframe']),
+    strategy: pickText(strategy, ['strategy']) === '-' ? 'breakout' : pickText(strategy, ['strategy']),
+    history_window: asNumber(strategy.history_window, 20),
+    breakout_lookback: asNumber(strategy.breakout_lookback, 5),
+    quantity: asNumber(strategy.quantity, 100),
+    position_quantity: asNumber(strategy.position_quantity, 0),
+    max_position: asNumber(strategy.max_position, 500),
+    stop_loss_pct: asNumber(strategy.stop_loss_pct, 0.03),
+    take_profit_pct: asNumber(strategy.take_profit_pct, 0.08),
+    dry_run: asBoolean(strategy.dry_run, true),
+    enable_buy: asBoolean(strategy.enable_buy, false),
+    active_lookback_days: asNumber(strategy.active_lookback_days, 10),
+    active_threshold_pct: asNumber(strategy.active_threshold_pct, 4),
+    breakout_buffer_pct: asNumber(strategy.breakout_buffer_pct, 0.2),
+    resistance_buffer_pct: asNumber(strategy.resistance_buffer_pct, 1),
+    afternoon_exit_time:
+      pickText(strategy, ['afternoon_exit_time']) === '-' ? '14:30' : pickText(strategy, ['afternoon_exit_time']),
+    limit_up_threshold_pct: asNumber(strategy.limit_up_threshold_pct, 9.8),
+  }
+}
+
 function ConfigField({
   label,
   hint,
@@ -358,15 +398,23 @@ export function TraderPage() {
     }
     return records.filter((item) => item.kind === recordFilter)
   }, [recordFilter, records])
-  const strategyOptions = useMemo(
+  const strategyOptions = useMemo<StrategyOption[]>(
     () =>
-      ((data?.strategies ?? []) as Array<Record<string, unknown>>).map((item, index) => ({
-        id: pickText(item, ['id']) === '-' ? `strategy-${index}` : pickText(item, ['id']),
-        name: pickText(item, ['name']) === '-' ? `策略 ${index + 1}` : pickText(item, ['name']),
-        symbol: pickText(item, ['symbol']),
-        enabled: asBoolean(item.enabled, true),
-      })),
-    [data],
+      ((data?.strategies ?? []) as Array<Record<string, unknown>>).map((item, index) => {
+        const id = pickText(item, ['id']) === '-' ? `strategy-${index}` : pickText(item, ['id'])
+        const snapshot = strategySnapshots.find((entry) => entry.id === id) ?? null
+        return {
+          id,
+          name: pickText(item, ['name']) === '-' ? `策略 ${index + 1}` : pickText(item, ['name']),
+          symbol: pickText(item, ['symbol']),
+          enabled: asBoolean(item.enabled, true),
+          lastAction: snapshot?.lastAction ?? '-',
+          observedAt: snapshot?.observedAt ?? null,
+          positionQuantity: snapshot?.positionQuantity ?? 0,
+          payload: item,
+        }
+      }),
+    [data, strategySnapshots],
   )
   const effectiveStrategyId = selectedStrategyId ?? strategyOptions[0]?.id ?? null
   const defaults = useMemo(
@@ -432,6 +480,19 @@ export function TraderPage() {
   function duplicateCurrentStrategy() {
     setSelectedStrategyId(null)
     setDraftStrategy(buildCopiedStrategyDefaults(form.getValues()))
+  }
+
+  async function toggleStrategyEnabled(strategy: StrategyOption) {
+    if (saveConfig.isPending) {
+      return
+    }
+    setDraftStrategy(null)
+    setSelectedStrategyId(strategy.id)
+    await saveConfig.mutateAsync({
+      broker: data?.broker ?? 'paper',
+      strategy_id: strategy.id,
+      strategy: normalizeStrategyPayload(strategy.payload, !strategy.enabled),
+    })
   }
 
   const cards: MetricCard[] = [
@@ -709,26 +770,52 @@ export function TraderPage() {
                 ) : null}
                 {strategyOptions.length ? (
                   strategyOptions.map((strategy) => (
-                    <button
+                    <div
                       key={strategy.id}
-                      type="button"
-                      onClick={() => selectSavedStrategy(strategy.id)}
                       className={cn(
-                        'block w-full rounded-lg border p-4 text-left transition',
+                        'rounded-lg border p-4 transition',
                         !draftStrategy && effectiveStrategyId === strategy.id
                           ? 'border-sky-300 bg-sky-50'
                           : 'border-slate-200 bg-white hover:border-slate-300',
                       )}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-medium text-slate-900">{strategy.name}</div>
-                        <Badge variant={strategy.enabled ? 'success' : 'muted'}>
-                          {strategy.enabled ? '启用' : '停用'}
-                        </Badge>
+                      <div className="flex items-start justify-between gap-3">
+                        <button type="button" onClick={() => selectSavedStrategy(strategy.id)} className="min-w-0 flex-1 text-left">
+                          <div className="text-sm font-medium text-slate-900">{strategy.name}</div>
+                          <div className="mt-2 text-sm text-slate-600">{strategy.id}</div>
+                          <div className="mt-1 text-xs text-slate-500">{strategy.symbol}</div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <div className="rounded-lg bg-slate-50 p-2.5">
+                              <div className="text-[11px] text-slate-500">最近动作</div>
+                              <div className="mt-1 text-sm text-slate-900">{strategy.lastAction}</div>
+                            </div>
+                            <div className="rounded-lg bg-slate-50 p-2.5">
+                              <div className="text-[11px] text-slate-500">最近观察</div>
+                              <div className="mt-1 text-sm text-slate-900">{strategy.observedAt ?? '-'}</div>
+                            </div>
+                          </div>
+                          <div className="mt-2 text-xs text-slate-500">持仓数量 {strategy.positionQuantity}</div>
+                        </button>
+                        <div className="flex flex-col items-end gap-2">
+                          <Badge variant={strategy.enabled ? 'success' : 'muted'}>
+                            {strategy.enabled ? '启用' : '停用'}
+                          </Badge>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={saveConfig.isPending}
+                            onClick={() => void toggleStrategyEnabled(strategy)}
+                          >
+                            {saveConfig.isPending && effectiveStrategyId === strategy.id
+                              ? '处理中...'
+                              : strategy.enabled
+                                ? '停用'
+                                : '启用'}
+                          </Button>
+                        </div>
                       </div>
-                      <div className="mt-2 text-sm text-slate-600">{strategy.id}</div>
-                      <div className="mt-1 text-xs text-slate-500">{strategy.symbol}</div>
-                    </button>
+                    </div>
                   ))
                 ) : (
                   <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
