@@ -1,5 +1,5 @@
 import { Separator } from './separator'
-import { cn } from '../../lib/utils'
+import { cn } from '../../platform/core/utils'
 
 export function Panel({
   title,

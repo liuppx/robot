@@ -24,9 +24,9 @@ import { Select } from '../../components/ui/select'
 import { Separator } from '../../components/ui/separator'
 import { StatCard } from '../../components/ui/stat-card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
-import { useRobotAction, useRobotConfigUpdate } from '../../features/robots/mutations'
-import { useRobotWorkspaceSummary } from '../../features/robots/queries'
-import { cn } from '../../lib/utils'
+import { useRobotAction, useRobotConfigUpdate } from '../../platform/robots/mutations'
+import { useRobotWorkspaceSummary } from '../../platform/robots/queries'
+import { cn } from '../../platform/core/utils'
 
 type MetricCard = {
   label: string

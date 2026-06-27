@@ -11,7 +11,7 @@ source_dir=""
 worktree_dir=""
 
 backend_rel="hub/backend"
-ui_rel="hub/ui"
+frontend_rel="hub/frontend"
 robots_rel="robots"
 config_rel="config"
 scripts_rel="scripts"
@@ -75,7 +75,7 @@ build_artifacts() {
 
 verify_artifacts() {
   local backend_src="$source_dir/$backend_rel"
-  local ui_src="$source_dir/$ui_rel"
+  local frontend_src="$source_dir/$frontend_rel"
   local robots_src="$source_dir/$robots_rel"
   local config_src="$source_dir/$config_rel"
   local scripts_src="$source_dir/$scripts_rel"
@@ -88,8 +88,16 @@ verify_artifacts() {
     echo "Missing backend project file: $backend_src/pyproject.toml" >&2
     exit 1
   fi
-  if [[ ! -d "$ui_src" ]]; then
-    echo "Missing frontend directory: $ui_src" >&2
+  if [[ ! -d "$frontend_src" ]]; then
+    echo "Missing frontend directory: $frontend_src" >&2
+    exit 1
+  fi
+  if [[ ! -f "$frontend_src/package.json" ]]; then
+    echo "Missing frontend package file: $frontend_src/package.json" >&2
+    exit 1
+  fi
+  if [[ ! -f "$frontend_src/dist/index.html" ]]; then
+    echo "Missing frontend build output: $frontend_src/dist/index.html" >&2
     exit 1
   fi
   if [[ ! -d "$robots_src" ]]; then
@@ -204,7 +212,7 @@ rm -rf "$stage_dir"
 mkdir -p "$stage_dir/hub"
 
 cp -R "$source_dir/$backend_rel" "$stage_dir/hub/"
-cp -R "$source_dir/$ui_rel" "$stage_dir/hub/"
+cp -R "$source_dir/$frontend_rel" "$stage_dir/hub/"
 cp -R "$source_dir/$robots_rel" "$stage_dir/"
 cp -R "$source_dir/$config_rel" "$stage_dir/"
 cp -R "$source_dir/$scripts_rel" "$stage_dir/"

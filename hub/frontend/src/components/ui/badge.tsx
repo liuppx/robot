@@ -1,4 +1,4 @@
-import { cn } from '../../lib/utils'
+import { cn } from '../../platform/core/utils'
 
 type BadgeVariant = 'default' | 'success' | 'muted'
 

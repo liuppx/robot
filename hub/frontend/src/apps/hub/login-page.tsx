@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { CheckCircle2, LoaderCircle, ShieldCheck, Wallet } from 'lucide-react'
 
-import { walletLogin } from '../../features/auth/mutations'
-import { useAuthSession } from '../../features/auth/queries'
-import { ApiError } from '../../lib/api'
-import { loadWalletHistory, shortWallet } from '../../lib/web3'
+import { walletLogin } from '../../platform/auth/mutations'
+import { usePlatformSession } from '../../platform/auth/queries'
+import { loadWalletHistory, shortWallet } from '../../platform/auth/web3'
+import { ApiError } from '../../platform/core/api'
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -19,14 +19,14 @@ function errorMessage(error: unknown): string {
 
 export function LoginPage() {
   const navigate = useNavigate()
-  const { data: session, isLoading, refetch } = useAuthSession()
+  const { session, isLoading, refetch } = usePlatformSession()
   const [submitting, setSubmitting] = useState(false)
   const [statusText, setStatusText] = useState<string | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
   const walletHistory = useMemo(() => loadWalletHistory(), [])
 
   useEffect(() => {
-    if (session?.wallet_id) {
+    if (session.isAuthenticated) {
       void navigate({ to: '/robots', replace: true })
     }
   }, [navigate, session])
@@ -97,9 +97,9 @@ export function LoginPage() {
               {errorText}
             </div>
           )}
-          {session?.wallet_id && (
+          {session.walletId && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              当前会话：{shortWallet(session.wallet_id)}
+              当前会话：{shortWallet(session.walletId)}
             </div>
           )}
         </section>
@@ -107,7 +107,7 @@ export function LoginPage() {
           {[
             ['认证闭环', '已接入 challenge / verify / me / logout'],
             ['机器人列表', '登录成功后跳转到 /robots'],
-            ['钱包桥接', '优先使用 web3-bs，缺失时回退 injected wallet'],
+            ['能力模型', session.capability.protocol === 'ucan' ? '已携带 UCAN 能力信息' : '当前仍以 cookie-wallet 会话为主'],
           ].map(([title, desc]) => (
             <div key={title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="text-sm font-semibold text-slate-900">{title}</div>

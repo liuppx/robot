@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     @property
     def ui_dir(self) -> Path:
-        return self.repo_root / "hub" / "ui"
+        return self.repo_root / "hub" / "frontend" / "dist"
 
     @property
     def parsed_model_allowlist(self) -> list[str]:

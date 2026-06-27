@@ -32,7 +32,7 @@ robots/custom/messenger/
 目前相关实现主要分布在：
 
 - `hub/backend/src/hub/`
-- `hub/ui/index.html`
+- `hub/frontend/dist/index.html`
 
 本目录当前承接的是机器人语义、配置约定和运维说明，不直接替代 hub 的现有实现。
 

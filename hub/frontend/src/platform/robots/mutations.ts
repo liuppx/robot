@@ -1,13 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-import { api } from '../../lib/api'
+import { api } from '../core/api'
 import type {
   BotInstanceActionResponse,
   BotInstanceCreateRequest,
   BotInstancePairResponse,
   RobotWorkspaceActionResponse,
   RobotWorkspaceConfigUpdateResponse,
-} from '../../lib/types'
+} from '../core/types'
 
 async function runRobotAction(robotKey: string, action: 'run-once' | 'start' | 'stop') {
   return api<RobotWorkspaceActionResponse>(`/api/v1/public/robots/${robotKey}/actions/${action}`, {

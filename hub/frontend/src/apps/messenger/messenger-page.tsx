@@ -28,15 +28,15 @@ import {
   useMessengerInstanceAction,
   useMessengerInstanceCreate,
   useMessengerWhatsappPair,
-} from '../../features/robots/mutations'
+} from '../../platform/robots/mutations'
 import {
   useMessengerInstanceDiagnose,
   useMessengerInstanceLogs,
   useMessengerInstances,
   useMessengerRobotTypes,
   useRobotWorkspaceSummary,
-} from '../../features/robots/queries'
-import { cn } from '../../lib/utils'
+} from '../../platform/robots/queries'
+import { cn } from '../../platform/core/utils'
 
 type MetricCard = {
   label: string

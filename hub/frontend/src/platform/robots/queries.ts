@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { api } from '../../lib/api'
+import { api } from '../core/api'
 import type {
   BotInstanceDiagnoseResponse,
   BotInstanceListResponse,
@@ -8,7 +8,7 @@ import type {
   RobotListResponse,
   RobotTypesResponse,
   RobotWorkspaceSummary,
-} from '../../lib/types'
+} from '../core/types'
 
 export function useRobots() {
   return useQuery({

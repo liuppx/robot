@@ -5,7 +5,7 @@
 当前迁移状态：
 
 - 新的 Python 版本已经作为默认控制面入口
-- 前端产品界面继续位于 `hub/ui/`
+- 前端产品界面位于 `hub/frontend/`，构建产物输出到 `hub/frontend/dist/`
 
 ## 设计目标
 

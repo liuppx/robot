@@ -5,7 +5,7 @@ import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Panel } from '../../components/ui/panel'
 import { StatCard } from '../../components/ui/stat-card'
-import { useRobots } from '../../features/robots/queries'
+import { useRobots } from '../../platform/robots/queries'
 
 const iconByKey = {
   trader: CandlestickChart,

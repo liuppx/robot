@@ -1,10 +1,10 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router'
 
-import { AppShell } from '../components/shell/app-shell'
-import { LoginPage } from '../routes/screens/login-page'
-import { MessengerPage } from '../routes/screens/messenger-page'
-import { RobotsPage } from '../routes/screens/robots-page'
-import { TraderPage } from '../routes/screens/trader-page'
+import { LoginPage } from '../apps/hub/login-page'
+import { RobotsPage } from '../apps/hub/robots-page'
+import { MessengerPage } from '../apps/messenger/messenger-page'
+import { TraderPage } from '../apps/trader/trader-page'
+import { AppShell } from './app-shell'
 
 function ShellLayout() {
   return (

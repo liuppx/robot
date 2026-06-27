@@ -3,9 +3,10 @@ import { useEffect } from 'react'
 import { Bot, CandlestickChart, MessageSquareMore } from 'lucide-react'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 
-import { logout } from '../../features/auth/mutations'
-import { useAuthSession } from '../../features/auth/queries'
-import { shortWallet } from '../../lib/web3'
+import { logout } from '../platform/auth/mutations'
+import { usePlatformSession } from '../platform/auth/queries'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
 
 const navItems = [
   { to: '/robots', label: '机器人', icon: Bot },
@@ -16,10 +17,10 @@ const navItems = [
 export function AppShell({ children }: PropsWithChildren) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigate = useNavigate()
-  const { data: session, isLoading } = useAuthSession()
+  const { session, isLoading } = usePlatformSession()
 
   useEffect(() => {
-    if (!isLoading && !session?.wallet_id) {
+    if (!isLoading && !session.isAuthenticated) {
       void navigate({ to: '/', replace: true })
     }
   }, [isLoading, navigate, session])
@@ -29,7 +30,7 @@ export function AppShell({ children }: PropsWithChildren) {
     await navigate({ to: '/', replace: true })
   }
 
-  if (isLoading || !session?.wallet_id) {
+  if (isLoading || !session.isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 text-sm text-slate-500">
         正在校验会话...
@@ -75,19 +76,18 @@ export function AppShell({ children }: PropsWithChildren) {
           <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6">
             <div>
               <div className="text-sm font-medium text-slate-900">机器人管理后台</div>
-              <div className="text-xs text-slate-500">React workspace preview</div>
+              <div className="text-xs text-slate-500">
+                {session.capability.protocol === 'ucan' ? 'Platform session: UCAN ready' : 'Platform session: cookie-wallet'}
+              </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
-                {shortWallet(session.wallet_id)}
-              </div>
-              <button
-                type="button"
-                onClick={() => void handleLogout()}
-                className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700"
-              >
+              <Badge variant="muted">{session.walletShort}</Badge>
+              <Badge variant={session.capability.protocol === 'ucan' ? 'success' : 'muted'}>
+                {session.capability.protocol === 'ucan' ? 'UCAN' : 'Wallet'}
+              </Badge>
+              <Button type="button" variant="outline" size="sm" onClick={() => void handleLogout()}>
                 退出
-              </button>
+              </Button>
             </div>
           </header>
           <div className="p-6">{children}</div>

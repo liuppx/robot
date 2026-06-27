@@ -20,8 +20,8 @@ hub/
   frontend/
     src/
     package.json
-  ui/
-    index.html  # frontend build output
+    dist/
+      index.html  # frontend build output
 robots/
   openclaw/
   nanobot/
@@ -56,8 +56,8 @@ bash scripts/starter.sh start
 前端约定：
 
 - `hub/frontend/` 是 React 源码目录
-- `hub/ui/` 是前端构建产物目录，由 `npm run build` 输出
-- Python backend 统一托管 `hub/ui/`，并负责 SPA 路由回退
+- `hub/frontend/dist/` 是前端构建产物目录，由 `npm run build` 输出
+- Python backend 统一托管 `hub/frontend/dist/`，并负责 SPA 路由回退
 
 认证相关配置建议：
 

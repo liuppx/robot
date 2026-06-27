@@ -42,3 +42,23 @@ the primary production entrypoint:
    `docs/archive/` once they are no longer current.
 4. If a directory exists mainly for migration support, document that status in
    its local `README.md`.
+
+## Hub frontend structure
+
+The Hub frontend is currently shipped as one SPA, but its source is now
+organized for a future split into robot-specific sites:
+
+- `hub/frontend/src/shell/`: Hub shell, app router, and shared navigation.
+- `hub/frontend/src/platform/`: cross-app platform concerns such as auth,
+  UCAN-adjacent session wiring, API clients, shared types, and query setup.
+- `hub/frontend/src/apps/`: robot-facing application modules. Each robot app
+  should keep its own screens and business UI here.
+- `hub/frontend/dist/`: built frontend artifacts served by the Python backend.
+
+Current rule of thumb:
+
+1. Add shared control-plane concerns to `platform/`.
+2. Add global layout and routing concerns to `shell/`.
+3. Add robot-specific UI to `apps/<robot>/`.
+4. Keep new robot apps separable so they can later evolve into independent
+   sites without rewriting platform and shell concerns first.
