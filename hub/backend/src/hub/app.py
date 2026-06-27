@@ -4,6 +4,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,12 +19,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(public_router)
 
     ui_dir = settings.ui_dir
-    if ui_dir.exists():
-        app.mount("/assets", StaticFiles(directory=ui_dir), name="assets")
+    index_file = ui_dir / "index.html"
+    if ui_dir.exists() and index_file.exists():
+        assets_dir = ui_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
         @app.get("/")
         async def index() -> FileResponse:
-            return FileResponse(ui_dir / "index.html")
+            return FileResponse(index_file)
+
+        @app.get("/{full_path:path}")
+        async def spa_entry(full_path: str) -> FileResponse:
+            if full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="not found")
+
+            candidate = (ui_dir / full_path).resolve()
+            try:
+                candidate.relative_to(ui_dir.resolve())
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="not found") from exc
+
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(index_file)
 
     return app
 

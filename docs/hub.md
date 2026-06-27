@@ -17,8 +17,11 @@ hub/
     .env.example
     pyproject.toml
     src/hub/
+  frontend/
+    src/
+    package.json
   ui/
-    index.html
+    index.html  # frontend build output
 robots/
   openclaw/
   nanobot/
@@ -49,6 +52,12 @@ bash scripts/starter.sh start
 ```
 
 访问：`http://127.0.0.1:3900/`
+
+前端约定：
+
+- `hub/frontend/` 是 React 源码目录
+- `hub/ui/` 是前端构建产物目录，由 `npm run build` 输出
+- Python backend 统一托管 `hub/ui/`，并负责 SPA 路由回退
 
 认证相关配置建议：
 
