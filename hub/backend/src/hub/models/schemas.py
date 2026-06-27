@@ -49,7 +49,7 @@ class AuthSessionView(BaseModel):
     ucan_signature: dict[str, Any] | list[Any] | str | int | float | bool | None = None
 
 
-class TraderSummaryResponse(BaseModel):
+class RobotWorkspaceSummaryResponse(BaseModel):
     available: bool
     broker: str
     running: bool
@@ -65,18 +65,18 @@ class TraderSummaryResponse(BaseModel):
     service_log_tail: str
 
 
-class TraderConfigUpdateRequest(BaseModel):
+class RobotWorkspaceConfigUpdateRequest(BaseModel):
     broker: str
     strategy: dict[str, Any]
 
 
-class TraderConfigUpdateResponse(BaseModel):
+class RobotWorkspaceConfigUpdateResponse(BaseModel):
     saved: bool
     broker: str
     strategyCount: int
 
 
-class TraderActionResponse(BaseModel):
+class RobotWorkspaceActionResponse(BaseModel):
     executed: bool
     action: str
     stdout: str

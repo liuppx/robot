@@ -88,12 +88,14 @@ bash scripts/deploy_full_stack.sh
 
 ```text
 HUB_BIND_ADDR=127.0.0.1:3900
+HUB_PUBLIC_BASE_URL=
 ROUTER_BASE_URL=https://test-router.yeying.pub/v1
 ROUTER_API_KEY=
 HUB_DEFAULT_MODEL=gpt-5.3-codex
 HUB_CHALLENGE_TTL_SECONDS=300
 HUB_SESSION_TTL_SECONDS=86400
 HUB_SESSION_SECRET=change-me-control-plane-session-secret
+HUB_SESSION_COOKIE_SECURE_MODE=auto
 HUB_ADMIN_TOKEN=change-me-admin-token
 HUB_INTERNAL_TOKEN=change-me-internal-token
 HUB_INSTANCE_PORT_START=18800
@@ -101,6 +103,9 @@ HUB_INSTANCE_PORT_END=18999
 ```
 
 > `scripts/bootstrap_full_stack.sh` 会自动从模板创建该文件。
+
+- `HUB_PUBLIC_BASE_URL`：线上建议填写控制台真实 HTTPS 地址，用于钱包签名 challenge 的 `domain` 和 `uri`
+- `HUB_SESSION_COOKIE_SECURE_MODE`：支持 `auto` / `always` / `never`，默认 `auto`
 
 ## 本地开发
 

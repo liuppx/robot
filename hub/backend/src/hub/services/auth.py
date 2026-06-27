@@ -44,6 +44,8 @@ class AuthSessionService:
     ttl_seconds: int
     challenge_ttl_seconds: int
     nonce_store_path: Path
+    public_base_url: str | None
+    secure_cookie_mode: str
 
     def _sign(self, payload_text: str) -> str:
         digest = hmac.new(
@@ -122,8 +124,8 @@ class AuthSessionService:
         expires_at = issued_at + timedelta(seconds=self.challenge_ttl_seconds)
         wallet_id = self.normalize_wallet(payload.wallet_id)
         chain_id = payload.chain_id
-        base_url = str(request.base_url).rstrip("/")
-        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.hostname or "localhost"
+        base_url = self.resolve_base_url(request)
+        host = self.resolve_domain(request)
         nonce = secrets.token_urlsafe(18)
         challenge = "\n".join(
             [
@@ -132,9 +134,9 @@ class AuthSessionService:
                 "",
                 "Sign in to Robot Hub.",
                 "",
-                f"URI: {base_url}/",
+                f"URI: {base_url}",
                 "Version: 1",
-                f"Chain ID: {chain_id or 'unspecified'}",
+                f"Chain ID: {chain_id or '1'}",
                 f"Nonce: {nonce}",
                 f"Issued At: {issued_at.isoformat()}",
                 f"Expiration Time: {expires_at.isoformat()}",
@@ -148,7 +150,7 @@ class AuthSessionService:
             "issued_at": issued_at.isoformat(),
             "expires_at": expires_at.isoformat(),
             "host": host,
-            "base_url": f"{base_url}/",
+            "base_url": base_url,
         }
         return AuthChallengeView(
             wallet_id=wallet_id,
@@ -254,6 +256,27 @@ class AuthSessionService:
     def current_session(self, request: Request) -> AuthSessionView | None:
         return self.decode_session(request.cookies.get(SESSION_COOKIE_NAME))
 
+    def resolve_base_url(self, request: Request) -> str:
+        if self.public_base_url:
+            return self.public_base_url.rstrip("/") + "/"
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.hostname or "localhost"
+        return f"{scheme}://{host}/"
+
+    def resolve_domain(self, request: Request) -> str:
+        if self.public_base_url:
+            return self.public_base_url.rstrip("/").split("://", 1)[-1]
+        return request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.hostname or "localhost"
+
+    def should_secure_cookie(self, request: Request) -> bool:
+        mode = (self.secure_cookie_mode or "auto").strip().lower()
+        if mode == "always":
+            return True
+        if mode == "never":
+            return False
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+        return scheme.lower() == "https"
+
 
 def auth_service(settings: Settings) -> AuthSessionService:
     return AuthSessionService(
@@ -261,4 +284,6 @@ def auth_service(settings: Settings) -> AuthSessionService:
         ttl_seconds=settings.session_ttl_seconds,
         challenge_ttl_seconds=settings.challenge_ttl_seconds,
         nonce_store_path=settings.resolved_runtime_dir / "auth" / "consumed_challenges.json",
+        public_base_url=settings.public_base_url,
+        secure_cookie_mode=settings.session_cookie_secure_mode,
     )

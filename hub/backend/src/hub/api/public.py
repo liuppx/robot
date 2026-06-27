@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi import Query
 
-from hub.adapters import TraderAdapter
+from hub.adapters import RobotWorkspaceAdapter, get_robot_workspace_adapter
 from hub.config import Settings
 from hub.models import (
     AuthChallengeRequest,
@@ -20,12 +20,12 @@ from hub.models import (
     BotInstanceView,
     HealthResponse,
     RobotListResponse,
+    RobotWorkspaceActionResponse,
+    RobotWorkspaceConfigUpdateRequest,
+    RobotWorkspaceConfigUpdateResponse,
+    RobotWorkspaceSummaryResponse,
     RobotTypesResponse,
     RouterModelsResponse,
-    TraderActionResponse,
-    TraderConfigUpdateRequest,
-    TraderConfigUpdateResponse,
-    TraderSummaryResponse,
     VersionResponse,
 )
 from hub.services import (
@@ -34,6 +34,7 @@ from hub.services import (
     SESSION_COOKIE_NAME,
     auth_service,
 )
+from hub.services.messenger import short_wallet
 
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
 
@@ -44,6 +45,30 @@ def require_session(request: Request) -> AuthSessionView:
     if session is None:
         raise HTTPException(status_code=401, detail="not logged in")
     return session
+
+
+def owner_matches_wallet(owner_wallet: str | None, wallet_id: str) -> bool:
+    if not owner_wallet:
+        return False
+    if owner_wallet == wallet_id:
+        return True
+    if owner_wallet.lower() == wallet_id.lower():
+        return True
+    return owner_wallet == short_wallet(wallet_id)
+
+
+def require_owned_instance(
+    service: MessengerStateService,
+    instance_id: str,
+    session: AuthSessionView,
+) -> tuple[dict, dict]:
+    record = service.get_instance_raw(instance_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="instance not found")
+    _db, raw = record
+    if not owner_matches_wallet(str(raw.get("owner_wallet", "")), session.wallet_id):
+        raise HTTPException(status_code=404, detail="instance not found")
+    return record
 
 
 def messenger_service(settings: Settings) -> MessengerStateService:
@@ -64,6 +89,11 @@ def messenger_service(settings: Settings) -> MessengerStateService:
             openclaw_prefix=settings.openclaw_prefix,
         )
     )
+def workspace_adapter_for_robot(settings: Settings, robot_key: str) -> RobotWorkspaceAdapter:
+    adapter = get_robot_workspace_adapter(settings.repo_root, robot_key)
+    if adapter is None:
+        raise HTTPException(status_code=404, detail="robot capability not found")
+    return adapter
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -101,6 +131,7 @@ async def public_auth_wallet_challenge(
 @router.post("/auth/wallet/verify", response_model=AuthSessionView)
 async def public_auth_wallet_verify(
     payload: AuthSessionVerifyRequest,
+    request: Request,
     response: Response,
 ) -> AuthSessionView:
     settings = Settings()
@@ -115,7 +146,7 @@ async def public_auth_wallet_verify(
         max_age=settings.session_ttl_seconds,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=service.should_secure_cookie(request),
         path="/",
     )
     return session
@@ -155,10 +186,12 @@ async def public_router_models(request: Request) -> RouterModelsResponse:
 
 @router.get("/robot/instances", response_model=BotInstanceListResponse)
 async def public_bot_instances(request: Request) -> BotInstanceListResponse:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
-    return service.list_instances()
+    listing = service.list_instances()
+    listing.items = [item for item in listing.items if owner_matches_wallet(item.owner_wallet, session.wallet_id)]
+    return listing
 
 
 @router.post("/robot/instances", response_model=BotInstanceView)
@@ -176,21 +209,20 @@ async def public_create_bot_instance(payload: BotInstanceCreateRequest, request:
 
 @router.get("/robot/instances/{instance_id}", response_model=BotInstanceView)
 async def public_bot_instance(instance_id: str, request: Request) -> BotInstanceView:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
-    instance = service.get_instance(instance_id)
-    if instance is None:
-        raise HTTPException(status_code=404, detail="instance not found")
-    return instance
+    _db, raw = require_owned_instance(service, instance_id, session)
+    return service._view_from_raw(instance_id, raw)
 
 
 @router.delete("/robot/instances/{instance_id}")
 async def public_delete_bot_instance(instance_id: str, request: Request) -> dict:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
+        require_owned_instance(service, instance_id, session)
         return service.delete_instance(instance_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
@@ -206,10 +238,11 @@ async def public_patch_bot_instance_model(
     payload: BotInstanceUpdateModelRequest,
     request: Request,
 ) -> BotInstanceView:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
+        require_owned_instance(service, instance_id, session)
         return service.update_instance_model(instance_id, payload.model)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
@@ -225,9 +258,10 @@ async def public_bot_instance_logs(
     request: Request,
     lines: int = 120,
 ) -> BotInstanceLogsResponse:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
+    require_owned_instance(service, instance_id, session)
     logs = service.get_instance_logs(instance_id, lines=lines)
     if logs is None:
         raise HTTPException(status_code=404, detail="instance not found")
@@ -240,10 +274,11 @@ async def public_bot_instance_diagnose(
     request: Request,
     auto_recover: bool = Query(default=False),
 ) -> BotInstanceDiagnoseResponse:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
+        require_owned_instance(service, instance_id, session)
         return service.diagnose_instance(instance_id, auto_recover=auto_recover)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
@@ -253,10 +288,11 @@ async def public_bot_instance_diagnose(
 
 @router.post("/robot/instances/{instance_id}/start", response_model=BotInstanceActionResponse)
 async def public_start_bot_instance(instance_id: str, request: Request) -> BotInstanceActionResponse:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
+        require_owned_instance(service, instance_id, session)
         return service.start_instance(instance_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
@@ -266,10 +302,11 @@ async def public_start_bot_instance(instance_id: str, request: Request) -> BotIn
 
 @router.post("/robot/instances/{instance_id}/stop", response_model=BotInstanceActionResponse)
 async def public_stop_bot_instance(instance_id: str, request: Request) -> BotInstanceActionResponse:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
+        require_owned_instance(service, instance_id, session)
         return service.stop_instance(instance_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
@@ -279,10 +316,11 @@ async def public_stop_bot_instance(instance_id: str, request: Request) -> BotIns
 
 @router.post("/robot/instances/{instance_id}/pair-whatsapp", response_model=BotInstancePairResponse)
 async def public_pair_whatsapp(instance_id: str, request: Request) -> BotInstancePairResponse:
-    require_session(request)
+    session = require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
+        require_owned_instance(service, instance_id, session)
         return service.pair_whatsapp(instance_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=exc.args[0]) from exc
@@ -292,63 +330,65 @@ async def public_pair_whatsapp(instance_id: str, request: Request) -> BotInstanc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.get("/trader/summary", response_model=TraderSummaryResponse)
-async def public_trader_summary(request: Request) -> TraderSummaryResponse:
+@router.get("/robots/{robot_key}/summary", response_model=RobotWorkspaceSummaryResponse)
+async def public_robot_summary(robot_key: str, request: Request) -> RobotWorkspaceSummaryResponse:
     require_session(request)
     settings = Settings()
-    trader_root = settings.repo_root / "robots" / "custom" / "trader"
-    adapter = TraderAdapter(trader_root)
+    adapter = workspace_adapter_for_robot(settings, robot_key)
     return adapter.summary()
 
 
-@router.get("/trader/config", response_model=TraderSummaryResponse)
-async def public_trader_config(request: Request) -> TraderSummaryResponse:
-    return await public_trader_summary(request)
+@router.get("/robots/{robot_key}/config", response_model=RobotWorkspaceSummaryResponse)
+async def public_robot_config(robot_key: str, request: Request) -> RobotWorkspaceSummaryResponse:
+    return await public_robot_summary(robot_key, request)
 
 
-@router.put("/trader/config", response_model=TraderConfigUpdateResponse)
-async def public_trader_config_update(
-    payload: TraderConfigUpdateRequest,
+@router.put("/robots/{robot_key}/config", response_model=RobotWorkspaceConfigUpdateResponse)
+async def public_robot_config_update(
+    robot_key: str,
+    payload: RobotWorkspaceConfigUpdateRequest,
     request: Request,
-) -> TraderConfigUpdateResponse:
+) -> RobotWorkspaceConfigUpdateResponse:
     require_session(request)
     settings = Settings()
-    trader_root = settings.repo_root / "robots" / "custom" / "trader"
-    adapter = TraderAdapter(trader_root)
+    adapter = workspace_adapter_for_robot(settings, robot_key)
     if not adapter.exists():
-        raise HTTPException(status_code=404, detail="trader robot not found")
+        raise HTTPException(status_code=404, detail="robot not found")
     try:
         return adapter.update_config(payload.broker, payload.strategy)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=405, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.post("/trader/run-once", response_model=TraderActionResponse)
-async def public_trader_run_once(request: Request) -> TraderActionResponse:
-    return await _run_trader_action("run_once", request)
+@router.post("/robots/{robot_key}/actions/run-once", response_model=RobotWorkspaceActionResponse)
+async def public_robot_run_once(robot_key: str, request: Request) -> RobotWorkspaceActionResponse:
+    return await _run_robot_action(robot_key, "run_once", request)
 
 
-@router.post("/trader/start", response_model=TraderActionResponse)
-async def public_trader_start(request: Request) -> TraderActionResponse:
-    return await _run_trader_action("start", request)
+@router.post("/robots/{robot_key}/actions/start", response_model=RobotWorkspaceActionResponse)
+async def public_robot_start(robot_key: str, request: Request) -> RobotWorkspaceActionResponse:
+    return await _run_robot_action(robot_key, "start", request)
 
 
-@router.post("/trader/stop", response_model=TraderActionResponse)
-async def public_trader_stop(request: Request) -> TraderActionResponse:
-    return await _run_trader_action("stop", request)
+@router.post("/robots/{robot_key}/actions/stop", response_model=RobotWorkspaceActionResponse)
+async def public_robot_stop(robot_key: str, request: Request) -> RobotWorkspaceActionResponse:
+    return await _run_robot_action(robot_key, "stop", request)
 
 
-async def _run_trader_action(action: str, request: Request) -> TraderActionResponse:
+async def _run_robot_action(robot_key: str, action: str, request: Request) -> RobotWorkspaceActionResponse:
     require_session(request)
     settings = Settings()
-    trader_root = settings.repo_root / "robots" / "custom" / "trader"
-    adapter = TraderAdapter(trader_root)
+    adapter = workspace_adapter_for_robot(settings, robot_key)
     if not adapter.exists():
-        raise HTTPException(status_code=404, detail="trader robot not found")
+        raise HTTPException(status_code=404, detail="robot not found")
     try:
         return adapter.run_action(action)
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=405, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:

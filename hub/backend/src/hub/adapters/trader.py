@@ -9,9 +9,9 @@ from typing import Any
 import yaml
 
 from hub.models import (
-    TraderActionResponse,
-    TraderConfigUpdateResponse,
-    TraderSummaryResponse,
+    RobotWorkspaceActionResponse,
+    RobotWorkspaceConfigUpdateResponse,
+    RobotWorkspaceSummaryResponse,
 )
 
 
@@ -147,13 +147,13 @@ class TraderAdapter:
             return False
         return True
 
-    def summary(self) -> TraderSummaryResponse:
+    def summary(self) -> RobotWorkspaceSummaryResponse:
         missing_runtime = self.root_dir / "runtime"
         missing_strategy = self.root_dir / "config" / "strategies.yaml"
         missing_log = missing_runtime / "logs" / "service.log"
         missing_state = missing_runtime / "state.json"
         if not self.exists():
-            return TraderSummaryResponse(
+            return RobotWorkspaceSummaryResponse(
                 available=False,
                 broker="unavailable",
                 running=False,
@@ -181,7 +181,7 @@ class TraderAdapter:
         orders_file = runtime_dir / "orders.jsonl"
         service_log_path = runtime_dir / "logs" / "service.log"
 
-        return TraderSummaryResponse(
+        return RobotWorkspaceSummaryResponse(
             available=True,
             broker=broker,
             running=running,
@@ -197,7 +197,7 @@ class TraderAdapter:
             service_log_tail=self.read_text_tail(service_log_path, 40),
         )
 
-    def update_config(self, broker: str, strategy: dict[str, Any]) -> TraderConfigUpdateResponse:
+    def update_config(self, broker: str, strategy: dict[str, Any]) -> RobotWorkspaceConfigUpdateResponse:
         normalized_broker = broker.strip().lower()
         if normalized_broker not in {"paper", "eastmoney_stub"}:
             raise ValueError("trader broker must be paper or eastmoney_stub")
@@ -220,13 +220,13 @@ class TraderAdapter:
             encoding="utf-8",
         )
 
-        return TraderConfigUpdateResponse(
+        return RobotWorkspaceConfigUpdateResponse(
             saved=True,
             broker=normalized_broker,
             strategyCount=1,
         )
 
-    def run_action(self, action: str) -> TraderActionResponse:
+    def run_action(self, action: str) -> RobotWorkspaceActionResponse:
         script_name_by_action = {
             "run_once": "run_once.sh",
             "start": "start_bot.sh",
@@ -259,7 +259,7 @@ class TraderAdapter:
         stderr = (completed.stderr or "").strip()
         if stderr:
             stdout = f"{stdout}\n{stderr}".strip() if stdout else stderr
-        return TraderActionResponse(
+        return RobotWorkspaceActionResponse(
             executed=True,
             action=action,
             stdout=stdout,

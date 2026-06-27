@@ -173,6 +173,12 @@ stateDiagram-v2
 | POST | `/api/v1/public/auth/logout` | Cookie | 登出 |
 | GET | `/api/v1/public/robot/types` | Cookie | 可创建机器人类型 |
 | GET | `/api/v1/public/router/models` | Cookie | 拉取 Router 模型列表 |
+| GET | `/api/v1/public/robots/{key}/summary` | Cookie | 读取机器人工作台摘要 |
+| GET | `/api/v1/public/robots/{key}/config` | Cookie | 读取机器人工作台配置视图 |
+| PUT | `/api/v1/public/robots/{key}/config` | Cookie | 更新机器人工作台配置 |
+| POST | `/api/v1/public/robots/{key}/actions/run-once` | Cookie | 触发机器人执行一次 |
+| POST | `/api/v1/public/robots/{key}/actions/start` | Cookie | 启动机器人常驻服务 |
+| POST | `/api/v1/public/robots/{key}/actions/stop` | Cookie | 停止机器人常驻服务 |
 | GET | `/api/v1/public/robot/instances` | Cookie | 列出实例 |
 | POST | `/api/v1/public/robot/instances` | Cookie | 创建实例 |
 | GET | `/api/v1/public/robot/instances/{id}` | Cookie | 读取实例 |
@@ -217,15 +223,22 @@ sequenceDiagram
     CP-->>B: wallet_id/chain_id/expires_at
 ```
 
+补充约束：
+
+- challenge 使用 SIWE 风格字段：`domain`、`uri`、`version`、`chain id`、`nonce`、`issued at`、`expiration time`
+- Hub 会对 challenge token 做 HMAC 签名，前端不可伪造
+- verify 成功后 challenge 立即标记为已消费，后续重放直接拒绝
+- Cookie `Secure` 属性支持 `auto` / `always` / `never`，默认根据 `X-Forwarded-Proto` 自动判断
+
 ### 8.2 创建并启动 WhatsApp 实例流程
 
 ```mermaid
 flowchart TD
-    A[UI 创建实例] --> B[POST /public/bot/instances]
+    A[UI 创建实例] --> B[POST /public/robot/instances]
     B --> C[分配ID/profile/port/root_dir]
     C --> D[写 workspace 模板 AGENTS/SOUL/USER]
     D --> E[持久化 state.json]
-    E --> F[POST /public/bot/instances/{id}/start]
+    E --> F[POST /public/robot/instances/{id}/start]
     F --> G[configure_profile 写 openclaw profile]
     G --> H[openclaw gateway run]
     H --> I[pid/lock 检测成功]

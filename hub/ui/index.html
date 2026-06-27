@@ -729,7 +729,8 @@
 const state = {
   me: null,
   items: [],
-  trader: null,
+  messengerWorkspace: null,
+  robotWorkspace: null,
   robotTypes: [],
   workspace: 'list',
   authMode: 'unknown',
@@ -827,15 +828,26 @@ function traderBrokerLabel(value) {
   })[value] || value || '-';
 }
 
+function renderMessengerWorkspaceSummary() {
+  const summary = state.messengerWorkspace;
+  const stateBlock = summary?.state || {};
+  const instanceCount = Number.isFinite(stateBlock.instanceCount) ? stateBlock.instanceCount : (state.items || []).length;
+  const runningCount = Number.isFinite(stateBlock.runningCount)
+    ? stateBlock.runningCount
+    : (state.items || []).filter(inst => inst.status === 'running').length;
+  document.getElementById('robotListBotCount').textContent = String(instanceCount);
+  document.getElementById('robotListBotRunning').textContent = String(runningCount);
+}
+
 // ---------------------------------------------------------------------------
 // Trader workspace: records, config, and summary rendering
 // ---------------------------------------------------------------------------
 
-function getTraderLatestState(data) {
+function getWorkspaceLatestState(data) {
   return data?.state?.strategies ? Object.values(data.state.strategies)[0] : null;
 }
 
-function getTraderStrategyConfig(data) {
+function getWorkspaceStrategyConfig(data) {
   return data?.strategies?.[0] || {};
 }
 
@@ -920,7 +932,7 @@ function pickLatestTraderRecord(allRecords, latest) {
 }
 
 function openLatestTraderRecord() {
-  const data = state.trader;
+  const data = state.robotWorkspace;
   const latest = data?.state?.strategies ? Object.values(data.state.strategies)[0] : null;
   const allRecords = buildTraderRecordList(data);
   const target = pickLatestTraderRecord(allRecords, latest);
@@ -932,7 +944,7 @@ function openLatestTraderRecord() {
   setTraderRecordFilter('all');
   state.traderSelectedRecordId = target.id;
   switchTraderDetailSection('records');
-  renderTraderSummary();
+  renderRobotWorkspace();
 }
 
 function bindFoldPanels() {
@@ -1076,7 +1088,7 @@ function bindTraderRecordSelection() {
   document.querySelectorAll('[data-record-id]').forEach(el => {
     el.onclick = () => {
       state.traderSelectedRecordId = el.dataset.recordId;
-      renderTraderSummary();
+      renderRobotWorkspace();
     };
   });
 }
@@ -1454,8 +1466,7 @@ async function loadInstances() {
   } catch (error) {
     if (String(error?.message || '').includes('HTTP 404')) {
       state.items = [];
-      document.getElementById('robotListBotCount').textContent = '待迁移';
-      document.getElementById('robotListBotRunning').textContent = '待迁移';
+      renderMessengerWorkspaceSummary();
       return;
     }
     throw error;
@@ -1477,28 +1488,43 @@ async function loadRobotTypes() {
   renderRobotTypeOptions();
 }
 
-async function loadTraderSummary() {
-  const data = await api('/api/v1/public/trader/summary');
-  state.trader = data || null;
-  renderTraderSummary();
+async function loadRobotWorkspaceSummary() {
+  const data = await api('/api/v1/public/robots/trader/summary');
+  state.robotWorkspace = data || null;
+  renderRobotWorkspace();
 }
 
-function renderTraderSummary() {
-  const data = state.trader;
-  const latest = getTraderLatestState(data);
-  const strategy = getTraderStrategyConfig(data);
+async function loadMessengerWorkspaceSummary() {
+  try {
+    const data = await api('/api/v1/public/robots/messenger/summary');
+    state.messengerWorkspace = data || null;
+  } catch (error) {
+    if (String(error?.message || '').includes('HTTP 404')) {
+      state.messengerWorkspace = null;
+      renderMessengerWorkspaceSummary();
+      return;
+    }
+    throw error;
+  }
+  renderMessengerWorkspaceSummary();
+}
+
+function renderRobotWorkspace() {
+  const data = state.robotWorkspace;
+  const latest = getWorkspaceLatestState(data);
+  const strategy = getWorkspaceStrategyConfig(data);
   renderTraderOverviewSection(data, latest, strategy);
   renderTraderRecordsSection(data);
   renderTraderDiagnostics(data);
-  renderTraderConfigForm();
+  renderRobotWorkspaceConfigForm();
 }
 
-function renderTraderConfigForm() {
-  const strategy = getTraderStrategyConfig(state.trader);
+function renderRobotWorkspaceConfigForm() {
+  const strategy = getWorkspaceStrategyConfig(state.robotWorkspace);
   document.getElementById('traderCfgId').value = strategy.id || 'etf-breakout-demo';
   document.getElementById('traderCfgName').value = strategy.name || '';
   document.getElementById('traderCfgSymbol').value = strategy.symbol || '';
-  document.getElementById('traderCfgBroker').value = state.trader?.broker || 'paper';
+  document.getElementById('traderCfgBroker').value = state.robotWorkspace?.broker || 'paper';
   document.getElementById('traderCfgStrategy').value = strategy.strategy || 'breakout';
   document.getElementById('traderCfgTimeframe').value = strategy.timeframe || '1d';
   document.getElementById('traderCfgQuantity').value = strategy.quantity ?? 100;
@@ -1519,7 +1545,7 @@ function renderTraderConfigForm() {
   document.getElementById('traderCfgEnableBuy').value = String(strategy.enable_buy ?? false);
 }
 
-function buildTraderConfigPayload() {
+function buildRobotWorkspaceConfigPayload() {
   return {
     broker: document.getElementById('traderCfgBroker').value,
     strategy: {
@@ -1556,9 +1582,7 @@ function buildTraderConfigPayload() {
 function renderInstances() {
   const body = document.getElementById('instancesBody');
   body.innerHTML = '';
-  const runningCount = (state.items || []).filter(inst => inst.status === 'running').length;
-  document.getElementById('robotListBotCount').textContent = String((state.items || []).length);
-  document.getElementById('robotListBotRunning').textContent = String(runningCount);
+  renderMessengerWorkspaceSummary();
 
   if (!state.items.length) {
     body.innerHTML = '<tr><td colspan="6" class="muted">暂无实例</td></tr>';
@@ -1742,30 +1766,30 @@ async function setGlobalModel() {
   await loadInstances();
 }
 
-async function traderAction(path, btn, successMessage) {
+async function runRobotWorkspaceAction(path, btn, successMessage) {
   setButtonLoading(btn, true);
   try {
     await api(path, { method: 'POST' });
-    await loadTraderSummary();
+    await loadRobotWorkspaceSummary();
     toast(successMessage);
   } finally {
     setButtonLoading(btn, false);
   }
 }
 
-async function saveTraderConfig(runAfterSave = false, btn = null) {
+async function saveRobotWorkspaceConfig(runAfterSave = false, btn = null) {
   setButtonLoading(btn, true);
   try {
-    const payload = buildTraderConfigPayload();
-    await api('/api/v1/public/trader/config', {
+    const payload = buildRobotWorkspaceConfigPayload();
+    await api('/api/v1/public/robots/trader/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (runAfterSave) {
-      await api('/api/v1/public/trader/run-once', { method: 'POST' });
+      await api('/api/v1/public/robots/trader/actions/run-once', { method: 'POST' });
     }
-    await loadTraderSummary();
+    await loadRobotWorkspaceSummary();
     toast(runAfterSave ? '交易员配置已保存并执行一次' : '交易员配置已保存');
   } finally {
     setButtonLoading(btn, false);
@@ -1815,15 +1839,15 @@ function bindTraderEvents() {
   document.getElementById('btnTraderInspectLatest').onclick = () => openLatestTraderRecord();
   document.getElementById('btnTraderRecordFilterAll').onclick = () => {
     setTraderRecordFilter('all');
-    renderTraderSummary();
+    renderRobotWorkspace();
   };
   document.getElementById('btnTraderRecordFilterSignal').onclick = () => {
     setTraderRecordFilter('signal');
-    renderTraderSummary();
+    renderRobotWorkspace();
   };
   document.getElementById('btnTraderRecordFilterOrder').onclick = () => {
     setTraderRecordFilter('order');
-    renderTraderSummary();
+    renderRobotWorkspace();
   };
   document.getElementById('tabTraderOverview').onclick = () => switchTraderDetailSection('overview');
   document.getElementById('tabTraderConfig').onclick = () => switchTraderDetailSection('config');
@@ -1831,7 +1855,7 @@ function bindTraderEvents() {
   document.getElementById('btnTraderRunOnce').onclick = async () => {
     const btn = document.getElementById('btnTraderRunOnce');
     try {
-      await traderAction('/api/v1/public/trader/run-once', btn, '交易员已执行一次');
+      await runRobotWorkspaceAction('/api/v1/public/robots/trader/actions/run-once', btn, '交易员已执行一次');
     } catch (e) {
       toast(`执行失败: ${e.message}`, 3000);
     }
@@ -1840,7 +1864,7 @@ function bindTraderEvents() {
   document.getElementById('btnTraderStart').onclick = async () => {
     const btn = document.getElementById('btnTraderStart');
     try {
-      await traderAction('/api/v1/public/trader/start', btn, '交易员已启动');
+      await runRobotWorkspaceAction('/api/v1/public/robots/trader/actions/start', btn, '交易员已启动');
     } catch (e) {
       toast(`启动失败: ${e.message}`, 3000);
     }
@@ -1849,7 +1873,7 @@ function bindTraderEvents() {
   document.getElementById('btnTraderStop').onclick = async () => {
     const btn = document.getElementById('btnTraderStop');
     try {
-      await traderAction('/api/v1/public/trader/stop', btn, '交易员已停止');
+      await runRobotWorkspaceAction('/api/v1/public/robots/trader/actions/stop', btn, '交易员已停止');
     } catch (e) {
       toast(`停止失败: ${e.message}`, 3000);
     }
@@ -1858,7 +1882,7 @@ function bindTraderEvents() {
   document.getElementById('btnTraderSave').onclick = async () => {
     const btn = document.getElementById('btnTraderSave');
     try {
-      await saveTraderConfig(false, btn);
+      await saveRobotWorkspaceConfig(false, btn);
     } catch (e) {
       toast(`保存失败: ${e.message}`, 3000);
     }
@@ -1867,7 +1891,7 @@ function bindTraderEvents() {
   document.getElementById('btnTraderSaveAndRun').onclick = async () => {
     const btn = document.getElementById('btnTraderSaveAndRun');
     try {
-      await saveTraderConfig(true, btn);
+      await saveRobotWorkspaceConfig(true, btn);
     } catch (e) {
       toast(`保存并执行失败: ${e.message}`, 3000);
     }
@@ -1953,12 +1977,19 @@ async function bootstrap() {
   const loggedIn = await checkAuth();
   if (!loggedIn) return;
 
-  await Promise.allSettled([loadRobotTypes(), loadInstances(), loadRouterModels(), loadTraderSummary()]);
+  await Promise.allSettled([
+    loadRobotTypes(),
+    loadInstances(),
+    loadRouterModels(),
+    loadRobotWorkspaceSummary(),
+    loadMessengerWorkspaceSummary(),
+  ]);
 
   if (state.refreshTimer) clearInterval(state.refreshTimer);
   state.refreshTimer = setInterval(() => {
     loadInstances().catch(() => {});
-    loadTraderSummary().catch(() => {});
+    loadRobotWorkspaceSummary().catch(() => {});
+    loadMessengerWorkspaceSummary().catch(() => {});
   }, 12000);
 
   if (state.authTimer) clearInterval(state.authTimer);

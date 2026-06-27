@@ -50,6 +50,11 @@ bash scripts/starter.sh start
 
 访问：`http://127.0.0.1:3900/`
 
+认证相关配置建议：
+
+- `HUB_PUBLIC_BASE_URL`：线上填写控制台真实 HTTPS 地址，Hub 会把它写入钱包签名 challenge 的 `domain` / `uri`
+- `HUB_SESSION_COOKIE_SECURE_MODE`：`auto` / `always` / `never`，默认 `auto`
+
 ## 4. 停止与重启
 
 ```bash
@@ -77,6 +82,12 @@ bash scripts/starter.sh restart
 - `GET /api/v1/public/robot/types`
 - `GET /api/v1/public/robots`
 - `GET /api/v1/public/router/models`
+- `GET /api/v1/public/robots/{key}/summary`
+- `GET /api/v1/public/robots/{key}/config`
+- `PUT /api/v1/public/robots/{key}/config`
+- `POST /api/v1/public/robots/{key}/actions/run-once`
+- `POST /api/v1/public/robots/{key}/actions/start`
+- `POST /api/v1/public/robots/{key}/actions/stop`
 - `GET /api/v1/public/robot/instances`
 - `POST /api/v1/public/robot/instances`
 - `GET /api/v1/public/robot/instances/{id}`
