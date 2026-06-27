@@ -163,8 +163,8 @@
       </div>
       <div class="card" style="margin-top:12px;">
         <div class="between">
-          <div class="muted">当前控制面默认使用钱包插件登录，前端通过 web3-bs 接入钱包发现、连接和链信息读取。</div>
-          <button id="btnLogin">连接钱包并登录</button>
+          <div class="muted">当前控制面默认使用钱包插件登录，前端会请求签名挑战并在验签通过后建立会话。</div>
+          <button id="btnLogin">连接钱包并签名登录</button>
         </div>
       </div>
       <div class="card">
@@ -1371,6 +1371,22 @@ async function walletLogin() {
   if (!wallet) throw new Error('钱包未返回账户');
   const chainId = await sdk.getChainId(provider);
 
+  const challengePayload = await api('/api/v1/public/auth/wallet/challenge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      wallet_id: wallet,
+      chain_id: chainId,
+    }),
+  });
+
+  const signature = await sdk.signMessage({
+    provider,
+    address: wallet,
+    message: challengePayload.challenge,
+    method: 'personal_sign',
+  });
+
   let ucanSession = null;
   let ucanSignature = null;
 
@@ -1390,12 +1406,15 @@ async function walletLogin() {
     } catch (_) {}
   }
 
-  await api('/api/v1/public/auth/wallet/connect', {
+  await api('/api/v1/public/auth/wallet/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       wallet_id: wallet,
       chain_id: chainId,
+      challenge: challengePayload.challenge,
+      challenge_token: challengePayload.challenge_token,
+      signature,
       ucan_session: ucanSession,
       ucan_signature: ucanSignature,
     }),

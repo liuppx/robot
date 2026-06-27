@@ -91,6 +91,7 @@ HUB_BIND_ADDR=127.0.0.1:3900
 ROUTER_BASE_URL=https://test-router.yeying.pub/v1
 ROUTER_API_KEY=
 HUB_DEFAULT_MODEL=gpt-5.3-codex
+HUB_CHALLENGE_TTL_SECONDS=300
 HUB_SESSION_TTL_SECONDS=86400
 HUB_SESSION_SECRET=change-me-control-plane-session-secret
 HUB_ADMIN_TOKEN=change-me-admin-token

@@ -1,6 +1,8 @@
 from .schemas import (
-    AuthSessionConnectRequest,
+    AuthChallengeRequest,
+    AuthChallengeView,
     AuthSessionView,
+    AuthSessionVerifyRequest,
     BotInstanceActionResponse,
     BotInstanceCreateRequest,
     BotInstanceDiagnoseResponse,
@@ -24,8 +26,10 @@ from .schemas import (
 
 __all__ = [
     "BotInstanceActionResponse",
-    "AuthSessionConnectRequest",
+    "AuthChallengeRequest",
+    "AuthChallengeView",
     "AuthSessionView",
+    "AuthSessionVerifyRequest",
     "BotInstanceCreateRequest",
     "BotInstanceDiagnoseResponse",
     "BotInstanceListResponse",

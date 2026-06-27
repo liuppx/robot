@@ -6,9 +6,11 @@ from fastapi import Query
 from hub.adapters import TraderAdapter
 from hub.config import Settings
 from hub.models import (
+    AuthChallengeRequest,
+    AuthChallengeView,
     BotInstanceActionResponse,
-    AuthSessionConnectRequest,
     AuthSessionView,
+    AuthSessionVerifyRequest,
     BotInstanceCreateRequest,
     BotInstanceDiagnoseResponse,
     BotInstanceListResponse,
@@ -34,6 +36,14 @@ from hub.services import (
 )
 
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
+
+
+def require_session(request: Request) -> AuthSessionView:
+    settings = Settings()
+    session = auth_service(settings).current_session(request)
+    if session is None:
+        raise HTTPException(status_code=401, detail="not logged in")
+    return session
 
 
 def messenger_service(settings: Settings) -> MessengerStateService:
@@ -75,14 +85,30 @@ async def public_auth_me(request: Request) -> AuthSessionView:
     return session
 
 
-@router.post("/auth/wallet/connect", response_model=AuthSessionView)
-async def public_auth_wallet_connect(
-    payload: AuthSessionConnectRequest,
+@router.post("/auth/wallet/challenge", response_model=AuthChallengeView)
+async def public_auth_wallet_challenge(
+    payload: AuthChallengeRequest,
+    request: Request,
+) -> AuthChallengeView:
+    settings = Settings()
+    service = auth_service(settings)
+    try:
+        return service.create_challenge(request, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/auth/wallet/verify", response_model=AuthSessionView)
+async def public_auth_wallet_verify(
+    payload: AuthSessionVerifyRequest,
     response: Response,
 ) -> AuthSessionView:
     settings = Settings()
     service = auth_service(settings)
-    session = service.create_session(payload)
+    try:
+        session = service.verify_wallet_session(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=service.encode_session(session),
@@ -102,13 +128,15 @@ async def public_auth_logout(response: Response) -> dict[str, bool]:
 
 
 @router.get("/robots", response_model=RobotListResponse)
-async def public_robots() -> RobotListResponse:
+async def public_robots(request: Request) -> RobotListResponse:
+    require_session(request)
     settings = Settings()
     return RobotRegistry(settings.repo_root).list_items()
 
 
 @router.get("/robot/types", response_model=RobotTypesResponse)
-async def public_robot_types() -> RobotTypesResponse:
+async def public_robot_types(request: Request) -> RobotTypesResponse:
+    require_session(request)
     return RobotTypesResponse(
         botTypes=[
             {"id": "whatsapp", "name": "WhatsApp eCommerce", "requires": ["manual_pairing"]},
@@ -118,14 +146,16 @@ async def public_robot_types() -> RobotTypesResponse:
 
 
 @router.get("/router/models", response_model=RouterModelsResponse)
-async def public_router_models() -> RouterModelsResponse:
+async def public_router_models(request: Request) -> RouterModelsResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     return service.router_models()
 
 
 @router.get("/robot/instances", response_model=BotInstanceListResponse)
-async def public_bot_instances() -> BotInstanceListResponse:
+async def public_bot_instances(request: Request) -> BotInstanceListResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     return service.list_instances()
@@ -135,10 +165,9 @@ async def public_bot_instances() -> BotInstanceListResponse:
 async def public_create_bot_instance(payload: BotInstanceCreateRequest, request: Request) -> BotInstanceView:
     settings = Settings()
     service = messenger_service(settings)
-    session = auth_service(settings).current_session(request)
+    session = require_session(request)
     try:
-        owner_wallet = session.wallet_id if session is not None else "guest"
-        return service.create_instance(payload, owner_wallet=owner_wallet)
+        return service.create_instance(payload, owner_wallet=session.wallet_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -146,7 +175,8 @@ async def public_create_bot_instance(payload: BotInstanceCreateRequest, request:
 
 
 @router.get("/robot/instances/{instance_id}", response_model=BotInstanceView)
-async def public_bot_instance(instance_id: str) -> BotInstanceView:
+async def public_bot_instance(instance_id: str, request: Request) -> BotInstanceView:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     instance = service.get_instance(instance_id)
@@ -156,7 +186,8 @@ async def public_bot_instance(instance_id: str) -> BotInstanceView:
 
 
 @router.delete("/robot/instances/{instance_id}")
-async def public_delete_bot_instance(instance_id: str) -> dict:
+async def public_delete_bot_instance(instance_id: str, request: Request) -> dict:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
@@ -173,7 +204,9 @@ async def public_delete_bot_instance(instance_id: str) -> dict:
 async def public_patch_bot_instance_model(
     instance_id: str,
     payload: BotInstanceUpdateModelRequest,
+    request: Request,
 ) -> BotInstanceView:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
@@ -189,8 +222,10 @@ async def public_patch_bot_instance_model(
 @router.get("/robot/instances/{instance_id}/logs", response_model=BotInstanceLogsResponse)
 async def public_bot_instance_logs(
     instance_id: str,
+    request: Request,
     lines: int = 120,
 ) -> BotInstanceLogsResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     logs = service.get_instance_logs(instance_id, lines=lines)
@@ -202,8 +237,10 @@ async def public_bot_instance_logs(
 @router.get("/robot/instances/{instance_id}/diagnose", response_model=BotInstanceDiagnoseResponse)
 async def public_bot_instance_diagnose(
     instance_id: str,
+    request: Request,
     auto_recover: bool = Query(default=False),
 ) -> BotInstanceDiagnoseResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
@@ -215,7 +252,8 @@ async def public_bot_instance_diagnose(
 
 
 @router.post("/robot/instances/{instance_id}/start", response_model=BotInstanceActionResponse)
-async def public_start_bot_instance(instance_id: str) -> BotInstanceActionResponse:
+async def public_start_bot_instance(instance_id: str, request: Request) -> BotInstanceActionResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
@@ -227,7 +265,8 @@ async def public_start_bot_instance(instance_id: str) -> BotInstanceActionRespon
 
 
 @router.post("/robot/instances/{instance_id}/stop", response_model=BotInstanceActionResponse)
-async def public_stop_bot_instance(instance_id: str) -> BotInstanceActionResponse:
+async def public_stop_bot_instance(instance_id: str, request: Request) -> BotInstanceActionResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
@@ -239,7 +278,8 @@ async def public_stop_bot_instance(instance_id: str) -> BotInstanceActionRespons
 
 
 @router.post("/robot/instances/{instance_id}/pair-whatsapp", response_model=BotInstancePairResponse)
-async def public_pair_whatsapp(instance_id: str) -> BotInstancePairResponse:
+async def public_pair_whatsapp(instance_id: str, request: Request) -> BotInstancePairResponse:
+    require_session(request)
     settings = Settings()
     service = messenger_service(settings)
     try:
@@ -253,7 +293,8 @@ async def public_pair_whatsapp(instance_id: str) -> BotInstancePairResponse:
 
 
 @router.get("/trader/summary", response_model=TraderSummaryResponse)
-async def public_trader_summary() -> TraderSummaryResponse:
+async def public_trader_summary(request: Request) -> TraderSummaryResponse:
+    require_session(request)
     settings = Settings()
     trader_root = settings.repo_root / "robots" / "custom" / "trader"
     adapter = TraderAdapter(trader_root)
@@ -261,14 +302,16 @@ async def public_trader_summary() -> TraderSummaryResponse:
 
 
 @router.get("/trader/config", response_model=TraderSummaryResponse)
-async def public_trader_config() -> TraderSummaryResponse:
-    return await public_trader_summary()
+async def public_trader_config(request: Request) -> TraderSummaryResponse:
+    return await public_trader_summary(request)
 
 
 @router.put("/trader/config", response_model=TraderConfigUpdateResponse)
 async def public_trader_config_update(
     payload: TraderConfigUpdateRequest,
+    request: Request,
 ) -> TraderConfigUpdateResponse:
+    require_session(request)
     settings = Settings()
     trader_root = settings.repo_root / "robots" / "custom" / "trader"
     adapter = TraderAdapter(trader_root)
@@ -283,21 +326,22 @@ async def public_trader_config_update(
 
 
 @router.post("/trader/run-once", response_model=TraderActionResponse)
-async def public_trader_run_once() -> TraderActionResponse:
-    return await _run_trader_action("run_once")
+async def public_trader_run_once(request: Request) -> TraderActionResponse:
+    return await _run_trader_action("run_once", request)
 
 
 @router.post("/trader/start", response_model=TraderActionResponse)
-async def public_trader_start() -> TraderActionResponse:
-    return await _run_trader_action("start")
+async def public_trader_start(request: Request) -> TraderActionResponse:
+    return await _run_trader_action("start", request)
 
 
 @router.post("/trader/stop", response_model=TraderActionResponse)
-async def public_trader_stop() -> TraderActionResponse:
-    return await _run_trader_action("stop")
+async def public_trader_stop(request: Request) -> TraderActionResponse:
+    return await _run_trader_action("stop", request)
 
 
-async def _run_trader_action(action: str) -> TraderActionResponse:
+async def _run_trader_action(action: str, request: Request) -> TraderActionResponse:
+    require_session(request)
     settings = Settings()
     trader_root = settings.repo_root / "robots" / "custom" / "trader"
     adapter = TraderAdapter(trader_root)

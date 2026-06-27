@@ -71,7 +71,8 @@ bash scripts/starter.sh restart
 - `GET /api/v1/public/health`
 - `GET /api/v1/public/version`
 - `GET /api/v1/public/auth/me`
-- `POST /api/v1/public/auth/wallet/connect`
+- `POST /api/v1/public/auth/wallet/challenge`
+- `POST /api/v1/public/auth/wallet/verify`
 - `POST /api/v1/public/auth/logout`
 - `GET /api/v1/public/robot/types`
 - `GET /api/v1/public/robots`

@@ -4,13 +4,23 @@ import base64
 import hashlib
 import hmac
 import json
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+from eth_account import Account
+from eth_account.messages import encode_defunct
+from eth_utils import to_checksum_address
 from fastapi import Request
 
 from hub.config import Settings
-from hub.models import AuthSessionConnectRequest, AuthSessionView
+from hub.models import (
+    AuthChallengeRequest,
+    AuthChallengeView,
+    AuthSessionView,
+    AuthSessionVerifyRequest,
+)
 
 SESSION_COOKIE_NAME = "hub_session"
 
@@ -32,6 +42,8 @@ def _b64_decode(text: str) -> bytes:
 class AuthSessionService:
     secret: str
     ttl_seconds: int
+    challenge_ttl_seconds: int
+    nonce_store_path: Path
 
     def _sign(self, payload_text: str) -> str:
         digest = hmac.new(
@@ -46,6 +58,31 @@ class AuthSessionService:
         payload_token = _b64_encode(payload_text.encode("utf-8"))
         signature = self._sign(payload_text)
         return f"{payload_token}.{signature}"
+
+    def encode_challenge_token(self, payload: dict[str, str | None]) -> str:
+        payload_text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        payload_token = _b64_encode(payload_text.encode("utf-8"))
+        signature = self._sign(f"challenge:{payload_text}")
+        return f"{payload_token}.{signature}"
+
+    def decode_challenge_token(self, token: str) -> dict[str, str | None] | None:
+        if "." not in token:
+            return None
+        payload_token, signature = token.rsplit(".", 1)
+        try:
+            payload_text = _b64_decode(payload_token).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+        expected_signature = self._sign(f"challenge:{payload_text}")
+        if not hmac.compare_digest(signature, expected_signature):
+            return None
+        try:
+            payload = json.loads(payload_text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
 
     def decode_session(self, token: str | None) -> AuthSessionView | None:
         if not token or "." not in token:
@@ -67,11 +104,11 @@ class AuthSessionService:
             return None
         return session
 
-    def create_session(self, payload: AuthSessionConnectRequest) -> AuthSessionView:
+    def create_session(self, payload: AuthSessionVerifyRequest) -> AuthSessionView:
         issued_at = _now_utc()
         expires_at = issued_at + timedelta(seconds=self.ttl_seconds)
         return AuthSessionView(
-            wallet_id=payload.wallet_id,
+            wallet_id=self.normalize_wallet(payload.wallet_id),
             chain_id=payload.chain_id,
             auth_type="wallet_plugin",
             issued_at=issued_at.isoformat(),
@@ -80,14 +117,139 @@ class AuthSessionService:
             ucan_signature=payload.ucan_signature,
         )
 
+    def create_challenge(self, request: Request, payload: AuthChallengeRequest) -> AuthChallengeView:
+        issued_at = _now_utc()
+        expires_at = issued_at + timedelta(seconds=self.challenge_ttl_seconds)
+        wallet_id = self.normalize_wallet(payload.wallet_id)
+        chain_id = payload.chain_id
+        base_url = str(request.base_url).rstrip("/")
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.hostname or "localhost"
+        nonce = secrets.token_urlsafe(18)
+        challenge = "\n".join(
+            [
+                f"{host} wants you to sign in with your Ethereum account:",
+                wallet_id,
+                "",
+                "Sign in to Robot Hub.",
+                "",
+                f"URI: {base_url}/",
+                "Version: 1",
+                f"Chain ID: {chain_id or 'unspecified'}",
+                f"Nonce: {nonce}",
+                f"Issued At: {issued_at.isoformat()}",
+                f"Expiration Time: {expires_at.isoformat()}",
+            ]
+        )
+        token_payload = {
+            "wallet_id": wallet_id,
+            "chain_id": chain_id,
+            "challenge": challenge,
+            "nonce": nonce,
+            "issued_at": issued_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "host": host,
+            "base_url": f"{base_url}/",
+        }
+        return AuthChallengeView(
+            wallet_id=wallet_id,
+            chain_id=chain_id,
+            challenge=challenge,
+            challenge_token=self.encode_challenge_token(token_payload),
+            issued_at=issued_at.isoformat(),
+            expires_at=expires_at.isoformat(),
+        )
+
+    def verify_wallet_session(self, payload: AuthSessionVerifyRequest) -> AuthSessionView:
+        challenge_payload = self.decode_challenge_token(payload.challenge_token)
+        if challenge_payload is None:
+            raise ValueError("invalid challenge token")
+        if challenge_payload.get("challenge") != payload.challenge:
+            raise ValueError("challenge mismatch")
+        if self.is_timestamp_expired(challenge_payload.get("expires_at")):
+            raise ValueError("challenge expired")
+        expected_wallet = self.normalize_wallet(challenge_payload.get("wallet_id"))
+        actual_wallet = self.normalize_wallet(payload.wallet_id)
+        if expected_wallet != actual_wallet:
+            raise ValueError("wallet mismatch")
+        expected_chain = challenge_payload.get("chain_id")
+        if (expected_chain or payload.chain_id) and (expected_chain != payload.chain_id):
+            raise ValueError("chain mismatch")
+        token_digest = hashlib.sha256(payload.challenge_token.encode("utf-8")).hexdigest()
+        if self.is_consumed(token_digest):
+            raise ValueError("challenge already used")
+        recovered_wallet = self.recover_wallet(payload.challenge, payload.signature)
+        if recovered_wallet != actual_wallet:
+            raise ValueError("signature does not match wallet")
+        self.mark_consumed(token_digest, challenge_payload.get("expires_at"))
+        return self.create_session(payload)
+
     def is_expired(self, session: AuthSessionView) -> bool:
+        return self.is_timestamp_expired(session.expires_at)
+
+    def is_timestamp_expired(self, expires_at_text: str | None) -> bool:
+        if not expires_at_text:
+            return True
         try:
-            expires_at = datetime.fromisoformat(session.expires_at)
+            expires_at = datetime.fromisoformat(expires_at_text)
         except ValueError:
             return True
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=UTC)
         return expires_at <= _now_utc()
+
+    def normalize_wallet(self, wallet_id: str | None) -> str:
+        if not wallet_id:
+            raise ValueError("wallet_id is required")
+        try:
+            return to_checksum_address(wallet_id)
+        except ValueError as exc:
+            raise ValueError("invalid wallet_id") from exc
+
+    def recover_wallet(self, challenge: str, signature: str) -> str:
+        try:
+            recovered = Account.recover_message(encode_defunct(text=challenge), signature=signature)
+            return self.normalize_wallet(recovered)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("invalid wallet signature") from exc
+
+    def load_consumed(self) -> dict[str, str]:
+        if not self.nonce_store_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.nonce_store_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        now = _now_utc()
+        cleaned: dict[str, str] = {}
+        for digest, expires_at_text in payload.items():
+            if not isinstance(digest, str) or not isinstance(expires_at_text, str):
+                continue
+            try:
+                expires_at = datetime.fromisoformat(expires_at_text)
+            except ValueError:
+                continue
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at > now:
+                cleaned[digest] = expires_at_text
+        return cleaned
+
+    def save_consumed(self, payload: dict[str, str]) -> None:
+        self.nonce_store_path.parent.mkdir(parents=True, exist_ok=True)
+        self.nonce_store_path.write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    def is_consumed(self, digest: str) -> bool:
+        return digest in self.load_consumed()
+
+    def mark_consumed(self, digest: str, expires_at_text: str | None) -> None:
+        payload = self.load_consumed()
+        payload[digest] = expires_at_text or _now_utc().isoformat()
+        self.save_consumed(payload)
 
     def current_session(self, request: Request) -> AuthSessionView | None:
         return self.decode_session(request.cookies.get(SESSION_COOKIE_NAME))
@@ -97,4 +259,6 @@ def auth_service(settings: Settings) -> AuthSessionService:
     return AuthSessionService(
         secret=settings.session_secret,
         ttl_seconds=settings.session_ttl_seconds,
+        challenge_ttl_seconds=settings.challenge_ttl_seconds,
+        nonce_store_path=settings.resolved_runtime_dir / "auth" / "consumed_challenges.json",
     )

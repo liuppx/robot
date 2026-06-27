@@ -14,9 +14,27 @@ class VersionResponse(BaseModel):
     runtime: str = "python"
 
 
-class AuthSessionConnectRequest(BaseModel):
+class AuthChallengeRequest(BaseModel):
     wallet_id: str
     chain_id: str | None = None
+
+
+class AuthChallengeView(BaseModel):
+    wallet_id: str
+    chain_id: str | None = None
+    auth_type: str = "wallet_plugin"
+    challenge: str
+    challenge_token: str
+    issued_at: str
+    expires_at: str
+
+
+class AuthSessionVerifyRequest(BaseModel):
+    wallet_id: str
+    chain_id: str | None = None
+    challenge: str
+    challenge_token: str
+    signature: str
     ucan_session: dict[str, Any] | list[Any] | str | int | float | bool | None = None
     ucan_signature: dict[str, Any] | list[Any] | str | int | float | bool | None = None
 

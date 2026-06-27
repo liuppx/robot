@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     default_model: str = Field(default="gpt-5.3-codex", alias="HUB_DEFAULT_MODEL")
     model_allowlist: str = Field(default="gpt-5.3-codex,gpt-5.1-mini", alias="HUB_MODEL_ALLOWLIST")
     session_ttl_seconds: int = Field(default=86400, alias="HUB_SESSION_TTL_SECONDS")
+    challenge_ttl_seconds: int = Field(default=300, alias="HUB_CHALLENGE_TTL_SECONDS")
     session_secret: str = Field(default="change-me-control-plane-session-secret", alias="HUB_SESSION_SECRET")
     instance_port_start: int = Field(default=18800, alias="HUB_INSTANCE_PORT_START")
     instance_port_end: int = Field(default=18999, alias="HUB_INSTANCE_PORT_END")

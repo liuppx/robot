@@ -168,7 +168,8 @@ stateDiagram-v2
 | GET | `/api/v1/public/health` | 无 | 健康检查 |
 | GET | `/api/v1/public/version` | 无 | 版本信息 |
 | GET | `/api/v1/public/auth/me` | Cookie | 查询登录状态 |
-| POST | `/api/v1/public/auth/wallet/connect` | 无 | 钱包登录、写会话 Cookie |
+| POST | `/api/v1/public/auth/wallet/challenge` | 无 | 生成一次性钱包签名挑战 |
+| POST | `/api/v1/public/auth/wallet/verify` | 无 | 验签并写会话 Cookie |
 | POST | `/api/v1/public/auth/logout` | Cookie | 登出 |
 | GET | `/api/v1/public/robot/types` | Cookie | 可创建机器人类型 |
 | GET | `/api/v1/public/router/models` | Cookie | 拉取 Router 模型列表 |
@@ -204,9 +205,13 @@ sequenceDiagram
     participant CP as Control Plane
 
     B->>W: eth_requestAccounts + eth_chainId
+    B->>CP: POST /public/auth/wallet/challenge
+    CP-->>B: challenge + challenge_token
+    B->>W: personal_sign(challenge)
+    W-->>B: signature
     B->>W: yeying_ucan_session (optional)
     B->>W: yeying_ucan_sign (optional)
-    B->>CP: POST /public/auth/wallet/connect
+    B->>CP: POST /public/auth/wallet/verify
     CP-->>B: Set-Cookie hub_session=...
     B->>CP: GET /public/auth/me
     CP-->>B: wallet_id/chain_id/expires_at
