@@ -14,7 +14,7 @@ Hub 是本仓库的唯一生产控制入口：
 ```text
 hub/
   backend/
-    .env.example
+    .env.template
     pyproject.toml
     src/hub/
   frontend/
@@ -68,11 +68,19 @@ bash scripts/starter.sh restart
 
 开发阶段建议前后端分进程启动：
 
+本地 backend 配置文件：
+
+```bash
+cp hub/backend/.env.template hub/backend/.env
+```
+
+`.env` 只用于本地开发，不提交到远端。
+
 启动 backend：
 
 ```bash
 cd hub/backend
-uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
+uv run python -m uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
 ```
 
 启动 frontend：
@@ -157,7 +165,7 @@ curl -sS http://127.0.0.1:3900/api/v1/public/health
 
 ```bash
 bash scripts/doctor_full_stack.sh
-# 检查 config/hub.env 中 ROUTER_API_KEY
+# 检查 config/hub.env 或 hub/backend/.env 中 ROUTER_API_KEY
 ```
 
 ### Q3: WhatsApp 配对后不回消息

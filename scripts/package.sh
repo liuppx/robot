@@ -9,6 +9,11 @@ auto_build="${AUTO_BUILD:-true}"
 tag_arg="${1:-}"
 source_dir=""
 worktree_dir=""
+backend_src=""
+frontend_src=""
+robots_src=""
+config_src=""
+starter_src=""
 
 backend_rel="hub/backend"
 frontend_rel="hub/frontend"
@@ -65,6 +70,11 @@ prepare_source_dir() {
   worktree_dir="$(mktemp -d "${TMPDIR:-/tmp}/${project_name}-package.XXXXXX")"
   git -C "$root_dir" worktree add --detach "$worktree_dir" "$ref" >/dev/null
   source_dir="$worktree_dir"
+  backend_src="$source_dir/$backend_rel"
+  frontend_src="$source_dir/$frontend_rel"
+  robots_src="$source_dir/$robots_rel"
+  config_src="$source_dir/$config_rel"
+  starter_src="$source_dir/$scripts_rel/starter.sh"
 }
 
 build_artifacts() {
@@ -88,12 +98,6 @@ build_artifacts() {
 }
 
 verify_artifacts() {
-  local backend_src="$source_dir/$backend_rel"
-  local frontend_src="$source_dir/$frontend_rel"
-  local robots_src="$source_dir/$robots_rel"
-  local config_src="$source_dir/$config_rel"
-  local scripts_src="$source_dir/$scripts_rel"
-
   if [[ ! -d "$backend_src" ]]; then
     echo "Missing backend directory: $backend_src" >&2
     exit 1
@@ -122,8 +126,12 @@ verify_artifacts() {
     echo "Missing env template: $config_src/hub.env.template" >&2
     exit 1
   fi
-  if [[ ! -f "$scripts_src/starter.sh" ]]; then
-    echo "Missing starter script: $scripts_src/starter.sh" >&2
+  if [[ ! -f "$backend_src/.env.template" ]]; then
+    echo "Missing backend local env template: $backend_src/.env.template" >&2
+    exit 1
+  fi
+  if [[ ! -f "$starter_src" ]]; then
+    echo "Missing starter script: $starter_src" >&2
     exit 1
   fi
 }
@@ -222,13 +230,15 @@ stage_dir="$out_dir/$pkg_name"
 archive_path="$out_dir/${pkg_name}.tar.gz"
 
 mkdir -p "$out_dir"
+echo "Cleaning output directory: $out_dir"
+find "$out_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 rm -rf "$stage_dir"
 mkdir -p "$stage_dir/hub"
 
-cp -R "$source_dir/$backend_rel" "$stage_dir/hub/"
-cp -R "$source_dir/$frontend_rel" "$stage_dir/hub/"
-cp -R "$source_dir/$robots_rel" "$stage_dir/"
-cp -R "$source_dir/$config_rel" "$stage_dir/"
+cp -R "$backend_src" "$stage_dir/hub/"
+cp -R "$frontend_src" "$stage_dir/hub/"
+cp -R "$robots_src" "$stage_dir/"
+cp -R "$config_src" "$stage_dir/"
 cp -R "$source_dir/$scripts_rel" "$stage_dir/"
 
 printf '%s\n' "$target_tag" > "$stage_dir/VERSION"

@@ -8,7 +8,7 @@
 
 ```bash
 cd hub/backend
-uv run uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
+uv run python -m uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 --port 3900
 ```
 
 再启动 frontend：

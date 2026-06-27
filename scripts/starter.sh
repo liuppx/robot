@@ -14,7 +14,6 @@ USAGE
 
 load_env() {
   local primary="$ROOT_DIR/config/hub.env"
-  local fallback_python="$ROOT_DIR/hub/backend/.env"
   local template="$ROOT_DIR/config/hub.env.template"
   local loaded=""
   local has_repo_root=0
@@ -51,8 +50,6 @@ load_env() {
 
   if [[ -f "$primary" ]]; then
     loaded="$primary"
-  elif [[ -f "$fallback_python" ]]; then
-    loaded="$fallback_python"
   fi
 
   if [[ -n "$loaded" ]]; then

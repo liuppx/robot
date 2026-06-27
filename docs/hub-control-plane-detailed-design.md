@@ -76,7 +76,7 @@ hub/
 ├─ hub/
 │  ├─ backend/
 │  │  ├─ src/hub/                  # Python 控制面
-│  │  ├─ .env.example              # 运行环境模板
+│  │  ├─ .env.template             # 本地开发环境模板
 │  │  ├─ pyproject.toml
 │  │  └─ uv.lock
 │  └─ frontend/
@@ -397,7 +397,8 @@ flowchart TD
 `bash scripts/starter.sh [start|stop|restart]`
 
 - 默认 `start`。
-- 自动读取 `config/hub.env`（或回退 `.env`）。
+- 打包后的服务运行读取 `config/hub.env`。
+- 本地 backend 开发读取 `hub/backend/.env`。
 - 管理 PID、日志、端口冲突检测。
 
 ### 14.2 打包脚本
