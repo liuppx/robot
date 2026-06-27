@@ -44,6 +44,23 @@ class TraderAdapterTest(unittest.TestCase):
         )
         return strategy_path
 
+    def write_runtime_files(self, trader_root: Path) -> None:
+        runtime_dir = trader_root / "runtime" / "logs"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        (trader_root / "runtime" / "state.json").write_text(
+            '{"strategies":{"etf-breakout-demo":{"symbol":"510300.SH","strategy":"breakout","lastAction":"hold","lastReason":"inside range","latestPrice":4.907,"observedAt":"2026-06-27T16:01:24","riskOk":true,"riskReason":"no order required","snapshotPath":"/tmp/snapshot.jsonl","strategyState":{},"metadata":{},"orderResult":null}}}',
+            encoding="utf-8",
+        )
+        (trader_root / "runtime" / "signals.jsonl").write_text(
+            '{"ts":"2026-06-27T08:29:59.616885+00:00","strategyId":"etf-breakout-demo","symbol":"510300.SH","action":"hold"}\n',
+            encoding="utf-8",
+        )
+        (trader_root / "runtime" / "orders.jsonl").write_text("", encoding="utf-8")
+        (trader_root / "runtime" / "logs" / "service.log").write_text(
+            '2026-06-27 16:29:59,618 INFO cycle result={"brokerStatus":{"provider":"paper"},"strategyCount":1,"results":[{"symbol":"510300.SH"}]}\n',
+            encoding="utf-8",
+        )
+
     def test_update_config_preserves_other_strategies(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             trader_root = self.build_root(Path(tmpdir))
@@ -95,6 +112,19 @@ class TraderAdapterTest(unittest.TestCase):
             loaded = yaml.safe_load(strategy_path.read_text(encoding="utf-8"))
             strategy_ids = [item["id"] for item in loaded["strategies"]]
             self.assertEqual(strategy_ids, ["etf-breakout-demo", "auction-wave-live"])
+
+    def test_summary_exposes_last_cycle_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trader_root = self.build_root(Path(tmpdir))
+            self.write_strategy_file(trader_root)
+            self.write_runtime_files(trader_root)
+            adapter = TraderAdapter(trader_root)
+
+            summary = adapter.summary()
+
+            self.assertEqual(summary.last_cycle_strategy_count, 1)
+            self.assertEqual(summary.last_cycle_request_count, 2)
+            self.assertEqual(summary.last_snapshot_path, "/tmp/snapshot.jsonl")
 
 
 if __name__ == "__main__":

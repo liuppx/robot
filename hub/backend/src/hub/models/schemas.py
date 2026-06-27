@@ -73,6 +73,9 @@ class RobotWorkspaceSummaryResponse(BaseModel):
     last_reason: str | None = None
     active_position_quantity: int = 0
     strategy_snapshots: list[dict[str, Any]] = []
+    last_cycle_strategy_count: int = 0
+    last_cycle_request_count: int = 0
+    last_snapshot_path: str | None = None
 
 
 class RobotWorkspaceConfigUpdateRequest(BaseModel):

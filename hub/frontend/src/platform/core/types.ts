@@ -72,6 +72,9 @@ export type RobotWorkspaceSummary = {
   last_reason: string | null
   active_position_quantity: number
   strategy_snapshots: Array<Record<string, unknown>>
+  last_cycle_strategy_count: number
+  last_cycle_request_count: number
+  last_snapshot_path: string | null
 }
 
 export type RobotWorkspaceActionResponse = {

@@ -39,10 +39,10 @@ class BreakoutStrategy(Strategy):
                 latest_price=latest,
                 metadata={"breakout_high": breakout_high, "lookback": lookback},
             )
-        if latest < breakout_low:
+        if latest <= breakout_low:
             return Signal(
                 action="sell",
-                reason=f"latest price {latest:.4f} fell below {lookback}-day low {breakout_low:.4f}",
+                reason=f"latest price {latest:.4f} reached or fell below {lookback}-day low {breakout_low:.4f}",
                 target_quantity=quantity,
                 latest_price=latest,
                 metadata={"breakout_low": breakout_low, "lookback": lookback},

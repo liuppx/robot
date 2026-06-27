@@ -107,6 +107,45 @@ type RecordDetailField = {
   value: string
 }
 
+function parseTimestamp(value: string): Date | null {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === '-') {
+    return null
+  }
+
+  const direct = new Date(trimmed)
+  if (!Number.isNaN(direct.getTime())) {
+    return direct
+  }
+
+  const normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')
+  const localDate = new Date(normalized)
+  if (!Number.isNaN(localDate.getTime())) {
+    return localDate
+  }
+
+  return null
+}
+
+function formatBrowserDateTime(value: string | null | undefined) {
+  if (!value) {
+    return '-'
+  }
+  const parsed = parseTimestamp(value)
+  if (!parsed) {
+    return value
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(parsed)
+}
+
 function displayPath(path: string | undefined) {
   if (!path) {
     return '-'
@@ -635,7 +674,9 @@ export function TraderPage() {
                           </div>
                           <div className="text-right">
                             <div className="text-xs text-slate-500">最近观察</div>
-                            <div className="mt-1 text-sm font-medium text-slate-900">{strategy.observedAt ?? '-'}</div>
+                            <div className="mt-1 text-sm font-medium text-slate-900" title={strategy.observedAt ?? '-'}>
+                              {formatBrowserDateTime(strategy.observedAt)}
+                            </div>
                           </div>
                         </div>
                         <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -669,11 +710,13 @@ export function TraderPage() {
                 <div className="grid gap-3 md:grid-cols-2">
                   {[
                     ['最近执行动作', data?.last_action || '-'],
-                    ['最近运行时间', data?.last_run_at || '-'],
+                    ['最近运行时间', formatBrowserDateTime(data?.last_run_at)],
+                    ['最近评估策略', String(data?.last_cycle_strategy_count ?? 0)],
+                    ['最近数据请求', String(data?.last_cycle_request_count ?? 0)],
                     ['信号条数', String(data?.signal_count ?? 0)],
                     ['订单条数', String(data?.order_count ?? 0)],
-                    ['最近信号时间', data?.last_signal_at || '-'],
-                    ['最近订单时间', data?.last_order_at || '-'],
+                    ['最近信号时间', formatBrowserDateTime(data?.last_signal_at)],
+                    ['最近订单时间', formatBrowserDateTime(data?.last_order_at)],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-lg bg-slate-50 p-4">
                       <div className="text-xs text-slate-500">{label}</div>
@@ -687,6 +730,7 @@ export function TraderPage() {
                     ['策略文件', displayPath(data?.strategy_file), data?.strategy_file || '-'],
                     ['状态文件', displayPath(data?.state_file), data?.state_file || '-'],
                     ['日志文件', displayPath(data?.service_log_path), data?.service_log_path || '-'],
+                    ['最近快照', displayPath(data?.last_snapshot_path ?? undefined), data?.last_snapshot_path || '-'],
                   ].map(([label, short, full]) => (
                     <div key={label} className="rounded-lg border border-slate-200 p-4">
                       <div className="text-xs text-slate-500">{label}</div>
@@ -728,10 +772,10 @@ export function TraderPage() {
                         <div className="grid gap-3 md:grid-cols-2">
                           {[
                             ['最近动作', selectedStrategySnapshot.lastAction],
-                            ['最近观察', selectedStrategySnapshot.observedAt ?? '-'],
-                            ['持仓数量', String(selectedStrategySnapshot.positionQuantity)],
-                            ['最近结论', selectedStrategySnapshot.lastReason],
-                          ].map(([label, value]) => (
+                                ['最近观察', formatBrowserDateTime(selectedStrategySnapshot.observedAt)],
+                                ['持仓数量', String(selectedStrategySnapshot.positionQuantity)],
+                                ['最近结论', selectedStrategySnapshot.lastReason],
+                              ].map(([label, value]) => (
                             <div key={label} className="rounded-lg bg-slate-50 p-3">
                               <div className="text-xs text-slate-500">{label}</div>
                               <div className="mt-1 text-sm text-slate-900">{value}</div>
@@ -756,7 +800,9 @@ export function TraderPage() {
                                     <div className="text-sm text-slate-900">{record.summary}</div>
                                     <span className="text-[11px] text-slate-500">{record.kind === 'order' ? '订单' : '信号'}</span>
                                   </div>
-                                  <div className="mt-1 text-xs text-slate-500">{record.timestamp}</div>
+                                  <div className="mt-1 text-xs text-slate-500" title={record.timestamp}>
+                                    {formatBrowserDateTime(record.timestamp)}
+                                  </div>
                                 </button>
                               ))}
                             </div>
@@ -871,7 +917,9 @@ export function TraderPage() {
                             </div>
                             <div className="rounded-lg bg-slate-50 p-2.5">
                               <div className="text-[11px] text-slate-500">最近观察</div>
-                              <div className="mt-1 text-sm text-slate-900">{strategy.observedAt ?? '-'}</div>
+                              <div className="mt-1 text-sm text-slate-900" title={strategy.observedAt ?? '-'}>
+                                {formatBrowserDateTime(strategy.observedAt)}
+                              </div>
                             </div>
                           </div>
                           <div className="mt-2 text-xs text-slate-500">持仓数量 {strategy.positionQuantity}</div>
@@ -1076,7 +1124,9 @@ export function TraderPage() {
                           </span>
                         </div>
                         <div className="mt-2 text-sm text-slate-600">{record.summary}</div>
-                        <div className="mt-2 text-xs text-slate-500">{record.timestamp}</div>
+                        <div className="mt-2 text-xs text-slate-500" title={record.timestamp}>
+                          {formatBrowserDateTime(record.timestamp)}
+                        </div>
                       </button>
                     ))
                   ) : (
@@ -1102,7 +1152,9 @@ export function TraderPage() {
                         </div>
                         <div className="mt-1 text-sm text-slate-600">{selectedRecord.summary}</div>
                       </div>
-                      <div className="text-xs text-slate-500">{selectedRecord.timestamp}</div>
+                      <div className="text-xs text-slate-500" title={selectedRecord.timestamp}>
+                        {formatBrowserDateTime(selectedRecord.timestamp)}
+                      </div>
                     </div>
                   </div>
 
@@ -1151,7 +1203,7 @@ export function TraderPage() {
                             <div className="grid gap-3">
                               {[
                                 ['最近动作', selectedRecordStrategy.lastAction],
-                                ['最近观察', selectedRecordStrategy.observedAt ?? '-'],
+                                ['最近观察', formatBrowserDateTime(selectedRecordStrategy.observedAt)],
                                 ['持仓数量', String(selectedRecordStrategy.positionQuantity)],
                                 ['风险结果', selectedRecordStrategy.riskOk == null ? '-' : selectedRecordStrategy.riskOk ? '通过' : '未通过'],
                               ].map(([label, value]) => (

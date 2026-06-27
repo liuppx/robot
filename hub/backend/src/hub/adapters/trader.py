@@ -149,7 +149,7 @@ class TraderAdapter:
         self,
         strategies: list[Any],
         state: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], int, str | None, str | None, str | None]:
+    ) -> tuple[list[dict[str, Any]], int, str | None, str | None, str | None, str | None]:
         strategy_state_map = state.get("strategies", {})
         if not isinstance(strategy_state_map, dict):
             strategy_state_map = {}
@@ -159,6 +159,7 @@ class TraderAdapter:
         last_run_at: str | None = None
         last_action: str | None = None
         last_reason: str | None = None
+        last_snapshot_path: str | None = None
 
         for strategy in strategies:
             if not isinstance(strategy, dict):
@@ -206,8 +207,35 @@ class TraderAdapter:
                 last_run_at = observed_at
                 last_action = str(snapshot["lastAction"])
                 last_reason = str(snapshot["lastReason"])
+                snapshot_path = runtime_state.get("snapshotPath")
+                last_snapshot_path = str(snapshot_path) if isinstance(snapshot_path, str) and snapshot_path.strip() else None
 
-        return snapshots, total_position_quantity, last_run_at, last_action, last_reason
+        return snapshots, total_position_quantity, last_run_at, last_action, last_reason, last_snapshot_path
+
+    @staticmethod
+    def read_last_cycle_metrics(service_log_path: Path) -> tuple[int, int]:
+        if not service_log_path.exists():
+            return 0, 0
+        try:
+            lines = service_log_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return 0, 0
+
+        for line in reversed(lines):
+            marker = "cycle result="
+            if marker not in line:
+                continue
+            payload_text = line.split(marker, 1)[1].strip()
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                return 0, 0
+            strategy_count = payload.get("strategyCount")
+            if not isinstance(strategy_count, int):
+                return 0, 0
+            # Current trader runtime performs 1 realtime quote request and 1 history request per enabled strategy.
+            return strategy_count, strategy_count * 2
+        return 0, 0
 
     @staticmethod
     def trader_pid(runtime_dir: Path) -> int | None:
@@ -257,6 +285,9 @@ class TraderAdapter:
                 last_reason=None,
                 active_position_quantity=0,
                 strategy_snapshots=[],
+                last_cycle_strategy_count=0,
+                last_cycle_request_count=0,
+                last_snapshot_path=None,
             )
 
         env_values = self.read_env_values()
@@ -274,12 +305,13 @@ class TraderAdapter:
         state = self.read_json_file_or_default(state_file)
         recent_signals = self.read_jsonl_tail(signals_file, 8)
         recent_orders = self.read_jsonl_tail(orders_file, 8)
-        strategy_snapshots, active_position_quantity, last_run_at, last_action, last_reason = self.build_strategy_snapshots(
+        strategy_snapshots, active_position_quantity, last_run_at, last_action, last_reason, last_snapshot_path = self.build_strategy_snapshots(
             strategies,
             state,
         )
         last_signal_at = self.pick_text(recent_signals[-1], ["ts", "timestamp", "created_at", "time"]) if recent_signals else None
         last_order_at = self.pick_text(recent_orders[-1], ["ts", "timestamp", "created_at", "time"]) if recent_orders else None
+        last_cycle_strategy_count, last_cycle_request_count = self.read_last_cycle_metrics(service_log_path)
 
         return RobotWorkspaceSummaryResponse(
             available=True,
@@ -305,6 +337,9 @@ class TraderAdapter:
             last_reason=last_reason,
             active_position_quantity=active_position_quantity,
             strategy_snapshots=strategy_snapshots,
+            last_cycle_strategy_count=last_cycle_strategy_count,
+            last_cycle_request_count=last_cycle_request_count,
+            last_snapshot_path=last_snapshot_path,
         )
 
     def update_config(
