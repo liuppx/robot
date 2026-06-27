@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { CheckCircle2, LoaderCircle, ShieldCheck, Wallet } from 'lucide-react'
+import { CheckCircle2, LoaderCircle, Wallet } from 'lucide-react'
 
 import { walletLogin } from '../../platform/auth/mutations'
 import { usePlatformSession } from '../../platform/auth/queries'
-import { loadWalletHistory, shortWallet } from '../../platform/auth/web3'
+import { shortWallet } from '../../platform/auth/web3'
 import { ApiError } from '../../platform/core/api'
 
 function errorMessage(error: unknown): string {
@@ -23,7 +23,6 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
   const [statusText, setStatusText] = useState<string | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
-  const walletHistory = useMemo(() => loadWalletHistory(), [])
 
   useEffect(() => {
     if (session.isAuthenticated) {
@@ -50,7 +49,7 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 px-6 py-10">
-      <div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+      <div className="mx-auto max-w-3xl">
         <section className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
           <div className="mb-10 flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-600 text-sm font-semibold text-white">
@@ -64,8 +63,7 @@ export function LoginPage() {
           <div className="space-y-4">
             <h2 className="text-3xl font-semibold tracking-tight text-slate-950">钱包登录入口</h2>
             <p className="max-w-2xl text-sm leading-6 text-slate-600">
-              使用现有 Hub 后端的 challenge / verify / me / logout 接口建立会话。登录成功后进入机器人列表，
-              当前先验证认证闭环，不替换默认生产入口。
+              连接钱包后进入机器人工作区。当前页面只保留登录主流程和会话状态，不展示额外说明面板。
             </p>
           </div>
           <div className="mt-8 flex flex-wrap gap-3">
@@ -102,39 +100,6 @@ export function LoginPage() {
               当前会话：{shortWallet(session.walletId)}
             </div>
           )}
-        </section>
-        <section className="grid gap-4">
-          {[
-            ['认证闭环', '已接入 challenge / verify / me / logout'],
-            ['机器人列表', '登录成功后跳转到 /robots'],
-            ['能力模型', session.capability.protocol === 'ucan' ? '已携带 UCAN 能力信息' : '当前仍以 cookie-wallet 会话为主'],
-          ].map(([title, desc]) => (
-            <div key={title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="text-sm font-semibold text-slate-900">{title}</div>
-              <div className="mt-2 text-sm text-slate-500">{desc}</div>
-            </div>
-          ))}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <ShieldCheck className="h-4 w-4" />
-              历史钱包
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {walletHistory.length ? (
-                walletHistory.map((wallet) => (
-                  <span
-                    key={wallet}
-                    className="inline-flex h-9 items-center rounded-full border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600"
-                    title={wallet}
-                  >
-                    {shortWallet(wallet)}
-                  </span>
-                ))
-              ) : (
-                <span className="text-sm text-slate-500">暂无历史钱包</span>
-              )}
-            </div>
-          </div>
         </section>
       </div>
     </div>
