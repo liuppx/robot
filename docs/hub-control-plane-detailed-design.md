@@ -42,7 +42,7 @@ Hub 当前已经形成一套可运行的“机器人控制平面”：
 ```mermaid
 flowchart LR
     U[Browser / Wallet] -->|HTTP + Cookie| CP[Python Control Plane]
-    CP -->|Serve Static| WEB[hub/ui/index.html]
+    CP -->|Serve Static| WEB[hub/frontend/dist/index.html]
     CP -->|spawn / config| OC1[OpenClaw Gateway #1]
     CP -->|spawn / config| OC2[OpenClaw Gateway #2]
     CP -->|spawn / config| OCN[OpenClaw Gateway #N]
@@ -62,7 +62,7 @@ flowchart LR
 
 ### 3.1 分层说明
 
-1. **交互层**：`hub/ui/index.html`，负责页面交互与轮询。
+1. **交互层**：`hub/frontend/` React 前端，构建后由 `hub/frontend/dist/index.html` 提供页面交互与轮询。
 2. **控制层**：`hub/backend/src/hub/`，负责 API、编排、状态机、自愈。
 3. **执行层**：`openclaw --profile hub-xxx ...`，真正跑 channel 与 agent。
 4. **外部依赖层**：Router API、WhatsApp/DingTalk 网络、钱包扩展。
@@ -79,8 +79,10 @@ hub/
 │  │  ├─ .env.example              # 运行环境模板
 │  │  ├─ pyproject.toml
 │  │  └─ uv.lock
-│  └─ ui/
-│     └─ index.html                # Web UI（纯静态）
+│  └─ frontend/
+│     ├─ src/                      # React 源码
+│     ├─ package.json
+│     └─ dist/                     # 前端构建产物（运行时/打包时生成）
 ├─ robots/                         # 机器人定义与运行约定
 ├─ runtime/
 │  ├─ control-plane/state.json     # 实例状态持久化文件
@@ -308,7 +310,7 @@ flowchart TD
 
 ## 10. 前端交互设计（单页控制台）
 
-前端是一个纯静态单页：`hub/ui/index.html`。
+前端当前是一个 React SPA，源码位于 `hub/frontend/`，构建产物位于 `hub/frontend/dist/`。
 
 ### 10.1 关键行为
 
@@ -411,7 +413,7 @@ flowchart TD
 
 ```text
 hub/backend/
-hub/ui/
+hub/frontend/
 robots/
 config/hub.env.template
 scripts/

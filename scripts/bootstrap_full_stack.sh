@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/hub/backend"
+FRONTEND_DIR="$ROOT_DIR/hub/frontend"
 CONFIG_DIR="$ROOT_DIR/config"
 ENV_TEMPLATE="$CONFIG_DIR/hub.env.template"
 ENV_FILE="$CONFIG_DIR/hub.env"
@@ -30,6 +31,22 @@ if [[ ! -f "$ENV_FILE" ]]; then
   cp "$ENV_TEMPLATE" "$ENV_FILE"
   echo "[info] created $ENV_FILE from template"
 fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "[error] npm not found. Install Node.js/npm first so Hub frontend can be built." >&2
+  exit 1
+fi
+
+echo "[step] build hub frontend"
+(
+  cd "$FRONTEND_DIR"
+  if [[ -f package-lock.json ]]; then
+    npm ci
+  else
+    npm install
+  fi
+  npm run build
+)
 
 if ! command -v openclaw >/dev/null 2>&1; then
   if [[ "$SKIP_OPENCLAW_INSTALL" == "1" ]]; then

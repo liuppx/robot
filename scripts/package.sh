@@ -71,6 +71,20 @@ build_artifacts() {
   if [[ "$auto_build" != "true" ]]; then
     return 0
   fi
+
+  require_cmd npm
+
+  local frontend_src="$source_dir/$frontend_rel"
+  echo "Building frontend artifacts in package worktree..."
+  (
+    cd "$frontend_src"
+    if [[ -f package-lock.json ]]; then
+      npm ci
+    else
+      npm install
+    fi
+    npm run build
+  )
 }
 
 verify_artifacts() {

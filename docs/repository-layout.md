@@ -54,6 +54,7 @@ organized for a future split into robot-specific sites:
 - `hub/frontend/src/apps/`: robot-facing application modules. Each robot app
   should keep its own screens and business UI here.
 - `hub/frontend/dist/`: built frontend artifacts served by the Python backend.
+  This directory is runtime/package output and should not be committed as source.
 
 Current rule of thumb:
 

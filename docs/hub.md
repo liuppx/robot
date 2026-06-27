@@ -58,6 +58,7 @@ bash scripts/starter.sh start
 - `hub/frontend/` 是 React 源码目录
 - `hub/frontend/dist/` 是前端构建产物目录，由 `npm run build` 输出
 - Python backend 统一托管 `hub/frontend/dist/`，并负责 SPA 路由回退
+- `hub/frontend/dist/` 不作为源码提交对象；仓库只提交 `hub/frontend/src/` 与构建配置，部署或打包阶段再生成构建产物
 
 认证相关配置建议：
 
