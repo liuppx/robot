@@ -2,12 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="$ROOT_DIR/config/bot-hub.env"
-LEGACY_ENV_FILE="$ROOT_DIR/dashboard/.env"
+ENV_FILE="$ROOT_DIR/config/hub.env"
+APP_ENV_FILE="$ROOT_DIR/hub/backend/.env"
 
 echo "[doctor] repo=$ROOT_DIR"
 
-for cmd in bash curl ss jq; do
+for cmd in bash curl jq python3; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "[ok] $cmd"
   else
@@ -15,15 +15,16 @@ for cmd in bash curl ss jq; do
   fi
 done
 
-if [[ -f "$HOME/.cargo/env" ]]; then
-  # shellcheck disable=SC1090
-  source "$HOME/.cargo/env"
+if command -v uv >/dev/null 2>&1; then
+  echo "[ok] uv $(uv --version)"
+else
+  echo "[warn] uv missing"
 fi
 
-if command -v cargo >/dev/null 2>&1; then
-  echo "[ok] cargo $(cargo -V)"
+if [[ -x "$ROOT_DIR/hub/backend/.venv/bin/robot-hub" ]]; then
+  echo "[ok] python hub executable ready"
 else
-  echo "[err] cargo missing"
+  echo "[warn] python hub executable missing; run scripts/bootstrap_full_stack.sh"
 fi
 
 if command -v openclaw >/dev/null 2>&1; then
@@ -35,8 +36,8 @@ fi
 ACTIVE_ENV=""
 if [[ -f "$ENV_FILE" ]]; then
   ACTIVE_ENV="$ENV_FILE"
-elif [[ -f "$LEGACY_ENV_FILE" ]]; then
-  ACTIVE_ENV="$LEGACY_ENV_FILE"
+elif [[ -f "$APP_ENV_FILE" ]]; then
+  ACTIVE_ENV="$APP_ENV_FILE"
 fi
 
 if [[ -n "$ACTIVE_ENV" ]]; then
@@ -46,9 +47,9 @@ if [[ -n "$ACTIVE_ENV" ]]; then
   if [[ -n "${ROUTER_API_KEY:-}" ]]; then
     echo "[ok] ROUTER_API_KEY configured"
     ROUTER_MODELS_URL="${ROUTER_BASE_URL:-https://test-router.yeying.pub/v1}/models"
-    if curl -fsS "$ROUTER_MODELS_URL" -H "Authorization: Bearer $ROUTER_API_KEY" -o /tmp/bot_hub_router_models.json; then
+    if curl -fsS "$ROUTER_MODELS_URL" -H "Authorization: Bearer $ROUTER_API_KEY" -o /tmp/hub_router_models.json; then
       echo "[ok] router endpoint reachable"
-      rm -f /tmp/bot_hub_router_models.json
+      rm -f /tmp/hub_router_models.json
     else
       echo "[warn] router endpoint request failed: $ROUTER_MODELS_URL"
     fi

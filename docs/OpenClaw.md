@@ -4,5 +4,5 @@
 
 当前生产主路径请优先阅读：
 - [`README.md`](../README.md)
-- [`docs/dashboard.md`](./dashboard.md)
-- [`docs/bot-hub-control-plane-detailed-design.md`](./bot-hub-control-plane-detailed-design.md)
+- [`docs/hub.md`](./hub.md)
+- [`docs/hub-control-plane-detailed-design.md`](./hub-control-plane-detailed-design.md)

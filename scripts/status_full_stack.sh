@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="$ROOT_DIR/config/bot-hub.env"
-LEGACY_ENV_FILE="$ROOT_DIR/dashboard/.env"
+ENV_FILE="$ROOT_DIR/config/hub.env"
+APP_ENV_FILE="$ROOT_DIR/hub/backend/.env"
 PID_FILE="$ROOT_DIR/runtime/control-plane/control-plane.pid"
 LOG_FILE="$ROOT_DIR/runtime/control-plane/logs/control-plane.out.log"
 BIND="127.0.0.1:3900"
@@ -15,13 +15,13 @@ if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1091
   source "$ENV_FILE"
   set +a
-  BIND="${BOT_HUB_BIND_ADDR:-$BIND}"
-elif [[ -f "$LEGACY_ENV_FILE" ]]; then
+  BIND="${HUB_BIND_ADDR:-$BIND}"
+elif [[ -f "$APP_ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1091
-  source "$LEGACY_ENV_FILE"
+  source "$APP_ENV_FILE"
   set +a
-  BIND="${BOT_HUB_BIND_ADDR:-$BIND}"
+  BIND="${HUB_BIND_ADDR:-$BIND}"
 fi
 
 echo "[info] bind=$BIND"

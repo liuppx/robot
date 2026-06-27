@@ -2,17 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="$ROOT_DIR/config/bot-hub.env"
-LEGACY_ENV_FILE="$ROOT_DIR/dashboard/.env"
+ENV_FILE="$ROOT_DIR/config/hub.env"
+APP_ENV_FILE="$ROOT_DIR/hub/backend/.env"
 
 bash "$ROOT_DIR/scripts/bootstrap_full_stack.sh"
 
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1091
   source "$ENV_FILE" || true
-elif [[ -f "$LEGACY_ENV_FILE" ]]; then
+elif [[ -f "$APP_ENV_FILE" ]]; then
   # shellcheck disable=SC1091
-  source "$LEGACY_ENV_FILE" || true
+  source "$APP_ENV_FILE" || true
 fi
 
 if [[ -z "${ROUTER_API_KEY:-}" ]]; then
@@ -30,4 +30,4 @@ if ! bash "$ROOT_DIR/scripts/doctor_full_stack.sh"; then
   echo "[warn] doctor reported issues; review output above"
 fi
 
-echo "[done] Open in browser: http://${BOT_HUB_BIND_ADDR:-127.0.0.1:3900}/"
+echo "[done] Open in browser: http://${HUB_BIND_ADDR:-127.0.0.1:3900}/"
