@@ -131,6 +131,59 @@ start_command_shell() {
   fi
 }
 
+python_launcher() {
+  local candidates=(
+    "${HUB_PYTHON_APP_DIR}/.venv/bin/python3"
+    "${HUB_PYTHON_APP_DIR}/.venv/bin/python"
+  )
+  local p
+  for p in "${candidates[@]}"; do
+    if [[ -x "$p" ]]; then
+      echo "$p"
+      return 0
+    fi
+  done
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return 0
+  fi
+  echo "[error] python launcher not found" >&2
+  exit 1
+}
+
+spawn_detached() {
+  local start_shell="$1"
+  local log_file="$2"
+  local launcher
+  launcher="$(python_launcher)"
+
+  START_SHELL="$start_shell" LOG_FILE="$log_file" "$launcher" - <<'PY'
+import os
+import subprocess
+import sys
+
+start_shell = os.environ["START_SHELL"]
+log_file = os.environ["LOG_FILE"]
+
+with open(log_file, "ab", buffering=0) as log_fp, open(os.devnull, "rb") as null_in:
+    proc = subprocess.Popen(
+        ["/bin/bash", "-lc", start_shell],
+        stdin=null_in,
+        stdout=log_fp,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        close_fds=True,
+        env=os.environ.copy(),
+    )
+
+print(proc.pid)
+PY
+}
+
 runtime_pid_file() {
   echo "${HUB_RUNTIME_DIR}/control-plane.pid"
 }
@@ -233,8 +286,8 @@ start_service() {
   fi
 
   echo "[info] starting control plane (python): $start_desc"
-  nohup bash -lc "$start_shell" > "$log_file" 2>&1 < /dev/null &
-  local pid=$!
+  local pid
+  pid="$(spawn_detached "$start_shell" "$log_file")"
   echo "$pid" > "$pid_file"
 
   sleep 1
