@@ -2,20 +2,28 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/dashboard"
+APP_DIR="$ROOT_DIR/hub/backend"
 CONFIG_DIR="$ROOT_DIR/config"
-ENV_TEMPLATE="$CONFIG_DIR/bot-hub.env.template"
-ENV_FILE="$CONFIG_DIR/bot-hub.env"
-LEGACY_ENV_FILE="$APP_DIR/.env"
+ENV_TEMPLATE="$CONFIG_DIR/hub.env.template"
+ENV_FILE="$CONFIG_DIR/hub.env"
+APP_ENV_FILE="$APP_DIR/.env"
 
 SKIP_OPENCLAW_INSTALL="${SKIP_OPENCLAW_INSTALL:-0}"
 
-echo "[step] bootstrap dashboard"
-bash "$ROOT_DIR/scripts/bootstrap_rust_control_plane.sh"
+echo "[step] bootstrap hub"
+if [[ -x "$APP_DIR/.venv/bin/robot-control-plane" ]]; then
+  echo "[ok] python control plane already prepared: $APP_DIR/.venv/bin/robot-control-plane"
+elif command -v uv >/dev/null 2>&1; then
+  echo "[step] install python control plane dependencies"
+  (cd "$APP_DIR" && uv sync)
+else
+  echo "[error] uv not found. Install uv first: https://docs.astral.sh/uv/" >&2
+  exit 1
+fi
 
 if [[ ! -f "$ENV_TEMPLATE" ]]; then
   cp "$APP_DIR/.env.example" "$ENV_TEMPLATE"
-  echo "[info] created $ENV_TEMPLATE from dashboard/.env.example"
+  echo "[info] created $ENV_TEMPLATE from hub/backend/.env.example"
 fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -47,10 +55,10 @@ if [[ -n "${ROUTER_API_KEY:-}" ]]; then
   echo "[ok] injected ROUTER_API_KEY into $ENV_FILE from current shell env"
 fi
 
-if [[ ! -f "$LEGACY_ENV_FILE" ]]; then
-  cp "$ENV_FILE" "$LEGACY_ENV_FILE"
-  echo "[info] created compatibility env: $LEGACY_ENV_FILE"
+if [[ ! -f "$APP_ENV_FILE" ]]; then
+  cp "$ENV_FILE" "$APP_ENV_FILE"
+  echo "[info] created app env: $APP_ENV_FILE"
 fi
 
 echo "[next] if needed, edit: $ENV_FILE"
-echo "[next] start bot plane: bash $ROOT_DIR/scripts/starter.sh start"
+echo "[next] start control plane: bash $ROOT_DIR/scripts/starter.sh start"

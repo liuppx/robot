@@ -10,10 +10,11 @@ tag_arg="${1:-}"
 source_dir=""
 worktree_dir=""
 
-binary_rel="dashboard/target/release/bot-hub-control-plane"
-web_rel="dashboard/web"
-env_template_rel="config/bot-hub.env.template"
-starter_rel="scripts/starter.sh"
+backend_rel="hub/backend"
+ui_rel="hub/ui"
+robots_rel="robots"
+config_rel="config"
+scripts_rel="scripts"
 
 usage() {
   echo "Usage: $(basename "$0") [v<major>.<minor>.<patch>]" >&2
@@ -59,20 +60,6 @@ fetch_remote_refs() {
   git -C "$root_dir" fetch "$remote_name" --prune --tags
 }
 
-ensure_cargo() {
-  if command -v cargo >/dev/null 2>&1; then
-    return 0
-  fi
-  if [[ -f "$HOME/.cargo/env" ]]; then
-    # shellcheck disable=SC1090
-    source "$HOME/.cargo/env"
-  fi
-  if ! command -v cargo >/dev/null 2>&1; then
-    echo "Missing cargo in PATH. Install Rust toolchain first." >&2
-    exit 1
-  fi
-}
-
 prepare_source_dir() {
   local ref="$1"
   worktree_dir="$(mktemp -d "${TMPDIR:-/tmp}/${project_name}-package.XXXXXX")"
@@ -84,32 +71,37 @@ build_artifacts() {
   if [[ "$auto_build" != "true" ]]; then
     return 0
   fi
-
-  ensure_cargo
-  echo "Building Rust control-plane binary (release)..."
-  (cd "$source_dir/dashboard" && cargo build --release)
 }
 
 verify_artifacts() {
-  local bin_src="$source_dir/$binary_rel"
-  local web_src="$source_dir/$web_rel"
-  local env_template_src="$source_dir/$env_template_rel"
-  local starter_src="$source_dir/$starter_rel"
+  local backend_src="$source_dir/$backend_rel"
+  local ui_src="$source_dir/$ui_rel"
+  local robots_src="$source_dir/$robots_rel"
+  local config_src="$source_dir/$config_rel"
+  local scripts_src="$source_dir/$scripts_rel"
 
-  if [[ ! -x "$bin_src" ]]; then
-    echo "Missing release binary: $bin_src" >&2
+  if [[ ! -d "$backend_src" ]]; then
+    echo "Missing backend directory: $backend_src" >&2
     exit 1
   fi
-  if [[ ! -d "$web_src" ]]; then
-    echo "Missing frontend static directory: $web_src" >&2
+  if [[ ! -f "$backend_src/pyproject.toml" ]]; then
+    echo "Missing backend project file: $backend_src/pyproject.toml" >&2
     exit 1
   fi
-  if [[ ! -f "$env_template_src" ]]; then
-    echo "Missing env template: $env_template_src" >&2
+  if [[ ! -d "$ui_src" ]]; then
+    echo "Missing frontend directory: $ui_src" >&2
     exit 1
   fi
-  if [[ ! -f "$starter_src" ]]; then
-    echo "Missing starter script: $starter_src" >&2
+  if [[ ! -d "$robots_src" ]]; then
+    echo "Missing robots directory: $robots_src" >&2
+    exit 1
+  fi
+  if [[ ! -f "$config_src/hub.env.template" ]]; then
+    echo "Missing env template: $config_src/hub.env.template" >&2
+    exit 1
+  fi
+  if [[ ! -f "$scripts_src/starter.sh" ]]; then
+    echo "Missing starter script: $scripts_src/starter.sh" >&2
     exit 1
   fi
 }
@@ -209,13 +201,13 @@ archive_path="$out_dir/${pkg_name}.tar.gz"
 
 mkdir -p "$out_dir"
 rm -rf "$stage_dir"
-mkdir -p "$stage_dir/build" "$stage_dir/config" "$stage_dir/scripts" "$stage_dir/dashboard"
+mkdir -p "$stage_dir/hub"
 
-cp "$source_dir/$binary_rel" "$stage_dir/build/bot-hub-control-plane"
-cp "$source_dir/$env_template_rel" "$stage_dir/config/bot-hub.env.template"
-cp "$source_dir/$starter_rel" "$stage_dir/scripts/starter.sh"
-chmod +x "$stage_dir/scripts/starter.sh"
-cp -R "$source_dir/$web_rel" "$stage_dir/dashboard/"
+cp -R "$source_dir/$backend_rel" "$stage_dir/hub/"
+cp -R "$source_dir/$ui_rel" "$stage_dir/hub/"
+cp -R "$source_dir/$robots_rel" "$stage_dir/"
+cp -R "$source_dir/$config_rel" "$stage_dir/"
+cp -R "$source_dir/$scripts_rel" "$stage_dir/"
 
 printf '%s\n' "$target_tag" > "$stage_dir/VERSION"
 printf '%s\n' "$build_hash_full" > "$stage_dir/COMMIT"

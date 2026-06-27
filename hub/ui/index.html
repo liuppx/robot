@@ -158,12 +158,12 @@
         <div class="logo">BH</div>
         <div>
           <h1>Robot 控制台</h1>
-          <p>登录后进入交易机器人工作台，信使的多实例能力保留在次级页面</p>
+          <p>进入机器人管理后台，使用钱包插件登录后可进入交易员工作台和信使管理页面</p>
         </div>
       </div>
       <div class="card" style="margin-top:12px;">
         <div class="between">
-          <div class="muted">先连接钱包才能进入控制台。当前默认工作区是交易员，其他信使能力会收纳到次级视图。</div>
+          <div class="muted">当前控制面默认使用钱包插件登录，前端通过 web3-bs 接入钱包发现、连接和链信息读取。</div>
           <button id="btnLogin">连接钱包并登录</button>
         </div>
       </div>
@@ -720,6 +720,7 @@
 
   <div id="toast"></div>
 
+<script src="/assets/vendor/web3-bs.umd.js"></script>
 <script>
 // ---------------------------------------------------------------------------
 // Shared state and base UI helpers
@@ -729,7 +730,9 @@ const state = {
   me: null,
   items: [],
   trader: null,
+  robotTypes: [],
   workspace: 'list',
+  authMode: 'unknown',
   traderDetailSection: 'overview',
   traderSelectedRecordId: null,
   traderRecordFilter: 'all',
@@ -794,7 +797,7 @@ function switchTraderDetailSection(next) {
 function formatLocalPath(value) {
   if (!value) return '-';
   const parts = String(value).split('/').filter(Boolean);
-  for (const marker of ['robots', 'dashboard', 'runtime', 'scripts']) {
+  for (const marker of ['robots', 'hub', 'runtime', 'scripts']) {
     const idx = parts.indexOf(marker);
     if (idx >= 0) return parts.slice(idx).join('/');
   }
@@ -1227,6 +1230,27 @@ function setSelectValueWithFallback(selectId, value) {
   el.value = value;
 }
 
+function defaultRobotTypes() {
+  return [
+    { id: 'whatsapp', name: 'WhatsApp eCommerce', requires: ['manual_pairing'] },
+    { id: 'dingtalk', name: 'DingTalk', requires: ['client_id', 'client_secret'] },
+  ];
+}
+
+function renderRobotTypeOptions() {
+  const kindEl = document.getElementById('fKind');
+  if (!kindEl) return;
+  const current = kindEl.value || 'whatsapp';
+  const items = (state.robotTypes && state.robotTypes.length) ? state.robotTypes : defaultRobotTypes();
+  kindEl.innerHTML = items.map(item => {
+    const label = item.id === 'whatsapp' ? 'WhatsApp' : (item.name || item.id);
+    return `<option value="${item.id}">${label}</option>`;
+  }).join('');
+  const nextValue = items.some(item => item.id === current) ? current : (items[0]?.id || 'whatsapp');
+  kindEl.value = nextValue;
+  syncTemplateByKind(false);
+}
+
 function detectSupplierByModelId(modelId) {
   const id = (modelId || '').toLowerCase();
   if (!id) return '';
@@ -1282,25 +1306,45 @@ async function api(path, options = {}) {
   try { data = JSON.parse(text); } catch (_) {}
 
   if (!resp.ok) {
-    const msg = data && data.error ? data.error : (`HTTP ${resp.status}`);
+    const msg =
+      (data && (data.error || data.detail)) ||
+      (`HTTP ${resp.status}`);
     throw new Error(msg);
   }
   if (data && data.ok === false) throw new Error(data.error || 'request failed');
-  return data ? data.data : null;
+  if (data && typeof data === 'object' && 'data' in data) return data.data;
+  return data;
+}
+
+function ensureWeb3Bs() {
+  const sdk = window.YeYingWeb3;
+  if (!sdk) {
+    throw new Error('web3-bs 未加载，请检查 /assets/vendor/web3-bs.umd.js');
+  }
+  return sdk;
+}
+
+async function resolveWalletPlugin() {
+  const sdk = ensureWeb3Bs();
+  const provider = await sdk.getProvider({ preferYeYing: true, timeoutMs: 1200 });
+  if (!provider) {
+    throw new Error('未检测到钱包扩展');
+  }
+  return { sdk, provider };
 }
 
 function saveWalletHistory(wallet) {
   let arr = [];
-  try { arr = JSON.parse(localStorage.getItem('bot_hub_wallets') || '[]'); } catch (_) {}
+  try { arr = JSON.parse(localStorage.getItem('hub_wallets') || '[]'); } catch (_) {}
   arr = [wallet, ...arr.filter(x => x !== wallet)].slice(0, 6);
-  localStorage.setItem('bot_hub_wallets', JSON.stringify(arr));
+  localStorage.setItem('hub_wallets', JSON.stringify(arr));
   renderWalletHistory();
 }
 
 function renderWalletHistory() {
   const root = document.getElementById('historyWallets');
   let arr = [];
-  try { arr = JSON.parse(localStorage.getItem('bot_hub_wallets') || '[]'); } catch (_) {}
+  try { arr = JSON.parse(localStorage.getItem('hub_wallets') || '[]'); } catch (_) {}
   root.innerHTML = '';
   if (!arr.length) {
     root.innerHTML = '<span class="muted">暂无历史钱包</span>';
@@ -1317,21 +1361,21 @@ function renderWalletHistory() {
 }
 
 async function walletLogin() {
-  if (!window.ethereum) {
-    throw new Error('未检测到钱包扩展');
+  const { sdk, provider } = await resolveWalletPlugin();
+  const pending = await sdk.focusPendingApproval(provider).catch(() => ({ focused: false }));
+  if (!pending.focused) {
+    await sdk.requestAccounts({ provider });
   }
-
-  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+  const accounts = await sdk.getAccounts(provider);
   const wallet = accounts && accounts[0];
   if (!wallet) throw new Error('钱包未返回账户');
-
-  const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+  const chainId = await sdk.getChainId(provider);
 
   let ucanSession = null;
   let ucanSignature = null;
 
   try {
-    ucanSession = await window.ethereum.request({
+    ucanSession = await provider.request({
       method: 'yeying_ucan_session',
       params: [{ audience: location.origin, ttl: 86400 }],
     });
@@ -1339,7 +1383,7 @@ async function walletLogin() {
 
   if (ucanSession) {
     try {
-      ucanSignature = await window.ethereum.request({
+      ucanSignature = await provider.request({
         method: 'yeying_ucan_sign',
         params: [{ signingInput: JSON.stringify({ aud: location.origin, ts: Date.now() }) }],
       });
@@ -1364,14 +1408,16 @@ async function walletLogin() {
 async function checkAuth() {
   try {
     const me = await api('/api/v1/public/auth/me');
+    state.authMode = 'wallet';
     state.me = me;
     document.getElementById('walletShort').textContent = shortWallet(me.wallet_id);
     document.getElementById('walletExpire').textContent = me.expires_at;
     document.getElementById('loginView').classList.add('hidden');
     document.getElementById('appView').classList.remove('hidden');
     return true;
-  } catch (_) {
+  } catch (error) {
     state.me = null;
+    state.authMode = 'wallet';
     resetLogPanel();
     document.getElementById('appView').classList.add('hidden');
     document.getElementById('loginView').classList.remove('hidden');
@@ -1380,11 +1426,36 @@ async function checkAuth() {
 }
 
 async function loadInstances() {
-  const data = await api('/api/v1/public/bot/instances');
-  state.items = data.items || [];
-  state.defaultModel = data.defaultModel || '';
-  applyModelFilters();
-  renderInstances();
+  try {
+  const data = await api('/api/v1/public/robot/instances');
+    state.items = data.items || [];
+    state.defaultModel = data.defaultModel || '';
+    applyModelFilters();
+    renderInstances();
+  } catch (error) {
+    if (String(error?.message || '').includes('HTTP 404')) {
+      state.items = [];
+      document.getElementById('robotListBotCount').textContent = '待迁移';
+      document.getElementById('robotListBotRunning').textContent = '待迁移';
+      return;
+    }
+    throw error;
+  }
+}
+
+async function loadRobotTypes() {
+  try {
+    const data = await api('/api/v1/public/robot/types');
+    state.robotTypes = data?.botTypes || defaultRobotTypes();
+  } catch (error) {
+    if (String(error?.message || '').includes('HTTP 404')) {
+      state.robotTypes = defaultRobotTypes();
+      renderRobotTypeOptions();
+      return;
+    }
+    throw error;
+  }
+  renderRobotTypeOptions();
 }
 
 async function loadTraderSummary() {
@@ -1460,7 +1531,7 @@ function buildTraderConfigPayload() {
 }
 
 // ---------------------------------------------------------------------------
-// Bot Hub workspace rendering
+// Hub workspace rendering
 // ---------------------------------------------------------------------------
 
 function renderInstances() {
@@ -1509,17 +1580,17 @@ function renderInstances() {
       setButtonLoading(btn, true);
       try {
         if (act === 'start') {
-          await api('/api/v1/public/bot/instances/' + id + '/start', { method: 'POST' });
+          await api('/api/v1/public/robot/instances/' + id + '/start', { method: 'POST' });
           toast(`实例 ${id} 已启动`);
           await loadInstances();
         }
         if (act === 'stop') {
-          await api('/api/v1/public/bot/instances/' + id + '/stop', { method: 'POST' });
+          await api('/api/v1/public/robot/instances/' + id + '/stop', { method: 'POST' });
           toast(`实例 ${id} 已停止`);
           await loadInstances();
         }
         if (act === 'pair') {
-          await api('/api/v1/public/bot/instances/' + id + '/pair-whatsapp', { method: 'POST' });
+          await api('/api/v1/public/robot/instances/' + id + '/pair-whatsapp', { method: 'POST' });
           toast(`实例 ${id} 已触发配对`);
           await viewLogs(id);
         }
@@ -1532,7 +1603,7 @@ function renderInstances() {
             toast('删除已取消');
             return;
           }
-          await api('/api/v1/public/bot/instances/' + id, { method: 'DELETE' });
+          await api('/api/v1/public/robot/instances/' + id, { method: 'DELETE' });
           if (state.currentLogInstanceId === id) {
             resetLogPanel();
           }
@@ -1541,7 +1612,7 @@ function renderInstances() {
         }
         if (act === 'set-model') {
           const model = document.getElementById(`model_${id}`).value.trim();
-          await api(`/api/v1/public/bot/instances/${id}/model`, {
+          await api(`/api/v1/public/robot/instances/${id}/model`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model }),
@@ -1559,7 +1630,7 @@ function renderInstances() {
 }
 
 async function viewLogs(id, silent = false) {
-  const data = await api(`/api/v1/public/bot/instances/${id}/logs?lines=260`);
+  const data = await api(`/api/v1/public/robot/instances/${id}/logs?lines=260`);
   state.currentLogInstanceId = id;
 
   document.getElementById('logTitle').textContent = `实例 ${id}`;
@@ -1623,7 +1694,7 @@ async function createInstance() {
 
   if (!payload.name) throw new Error('名称必填');
 
-  await api('/api/v1/public/bot/instances', {
+  await api('/api/v1/public/robot/instances', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -1686,10 +1757,19 @@ async function loadRouterModels() {
   const provider = document.getElementById('fProviderGlobal')?.value || 'router';
   if (provider !== 'router') return;
 
-  const data = await api('/api/v1/public/router/models');
-  const ids = extractModelIds(data.models || data);
-  state.modelCatalog.router = ids.length ? ids : ['gpt-5.3-codex'];
-  applyModelFilters();
+  try {
+    const data = await api('/api/v1/public/router/models');
+    const ids = extractModelIds(data.models || data);
+    state.modelCatalog.router = ids.length ? ids : ['gpt-5.3-codex'];
+    applyModelFilters();
+  } catch (error) {
+    if (String(error?.message || '').includes('HTTP 404')) {
+      state.modelCatalog.router = ['gpt-5.3-codex'];
+      applyModelFilters();
+      return;
+    }
+    throw error;
+  }
 }
 
 async function logout() {
@@ -1848,12 +1928,13 @@ function bindEvents() {
 
 async function bootstrap() {
   renderWalletHistory();
+  renderRobotTypeOptions();
   switchWorkspace('list');
   switchTraderDetailSection('overview');
   const loggedIn = await checkAuth();
   if (!loggedIn) return;
 
-  await Promise.allSettled([loadInstances(), loadRouterModels(), loadTraderSummary()]);
+  await Promise.allSettled([loadRobotTypes(), loadInstances(), loadRouterModels(), loadTraderSummary()]);
 
   if (state.refreshTimer) clearInterval(state.refreshTimer);
   state.refreshTimer = setInterval(() => {
@@ -1862,14 +1943,16 @@ async function bootstrap() {
   }, 12000);
 
   if (state.authTimer) clearInterval(state.authTimer);
-  state.authTimer = setInterval(async () => {
-    const ok = await checkAuth();
-    if (!ok) {
-      clearInterval(state.refreshTimer);
-      clearInterval(state.authTimer);
-      toast('登录已失效，请重新连接钱包');
-    }
-  }, 30000);
+  if (state.authMode === 'wallet') {
+    state.authTimer = setInterval(async () => {
+      const ok = await checkAuth();
+      if (!ok) {
+        clearInterval(state.refreshTimer);
+        clearInterval(state.authTimer);
+        toast('登录已失效，请重新连接钱包');
+      }
+    }, 30000);
+  }
 }
 
 bindEvents();

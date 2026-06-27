@@ -1,8 +1,8 @@
-# Dashboard（Bot 平面，生产入口）
+# Hub（Robot 控制面，生产入口）
 
 ## 1. 定位
 
-Dashboard 是本仓库的唯一生产控制入口：
+Hub 是本仓库的唯一生产控制入口：
 
 - 钱包登录门禁
 - 多实例编排（WhatsApp / DingTalk）
@@ -12,11 +12,17 @@ Dashboard 是本仓库的唯一生产控制入口：
 ## 2. 目录
 
 ```text
-dashboard/
-  Cargo.toml
-  .env.example
-  src/main.rs
-  web/index.html
+hub/
+  backend/
+    .env.example
+    pyproject.toml
+    src/control_plane/
+  ui/
+    index.html
+robots/
+  openclaw/
+  nanobot/
+  custom/
 scripts/
   starter.sh
   package.sh
@@ -29,16 +35,16 @@ scripts/
 ## 3. 启动（推荐）
 
 ```bash
-cd /home/administrator/code/bot_hub
+cd /home/administrator/code/hub
 bash scripts/deploy_full_stack.sh
 ```
 
 或分步执行：
 
 ```bash
-cd /home/administrator/code/bot_hub
+cd /home/administrator/code/hub
 bash scripts/bootstrap_full_stack.sh
-# 编辑 config/bot-hub.env，填 ROUTER_API_KEY
+# 编辑 config/hub.env，填 ROUTER_API_KEY
 bash scripts/starter.sh start
 ```
 
@@ -67,25 +73,25 @@ bash scripts/starter.sh restart
 - `GET /api/v1/public/auth/me`
 - `POST /api/v1/public/auth/wallet/connect`
 - `POST /api/v1/public/auth/logout`
-- `GET /api/v1/public/bot/types`
+- `GET /api/v1/public/robot/types`
+- `GET /api/v1/public/robots`
 - `GET /api/v1/public/router/models`
-- `GET /api/v1/public/bot/instances`
-- `POST /api/v1/public/bot/instances`
-- `GET /api/v1/public/bot/instances/{id}`
-- `DELETE /api/v1/public/bot/instances/{id}`
-- `PATCH /api/v1/public/bot/instances/{id}/model`
-- `POST /api/v1/public/bot/instances/{id}/start`
-- `POST /api/v1/public/bot/instances/{id}/stop`
-- `POST /api/v1/public/bot/instances/{id}/pair-whatsapp`
-- `GET /api/v1/public/bot/instances/{id}/logs`
-- `GET /api/v1/public/bot/instances/{id}/diagnose`
+- `GET /api/v1/public/robot/instances`
+- `POST /api/v1/public/robot/instances`
+- `GET /api/v1/public/robot/instances/{id}`
+- `DELETE /api/v1/public/robot/instances/{id}`
+- `PATCH /api/v1/public/robot/instances/{id}/model`
+- `POST /api/v1/public/robot/instances/{id}/start`
+- `POST /api/v1/public/robot/instances/{id}/stop`
+- `POST /api/v1/public/robot/instances/{id}/pair-whatsapp`
+- `GET /api/v1/public/robot/instances/{id}/logs`
+- `GET /api/v1/public/robot/instances/{id}/diagnose`
 
 ### admin
-- `PATCH /api/v1/admin/router/default-model`
-- `GET /api/v1/admin/runtime/summary`
+- 预留，当前默认控制面未开放生产 admin 路由
 
 ### internal
-- `POST /api/v1/internal/runtime/health/probe`
+- 预留，当前默认控制面未开放 production internal 路由
 
 ## 7. 常见问题
 
@@ -100,7 +106,7 @@ bash scripts/starter.sh start
 
 ```bash
 bash scripts/doctor_full_stack.sh
-# 检查 config/bot-hub.env 中 ROUTER_API_KEY
+# 检查 config/hub.env 中 ROUTER_API_KEY
 ```
 
 ### Q3: WhatsApp 配对后不回消息

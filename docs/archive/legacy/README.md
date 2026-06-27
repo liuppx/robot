@@ -4,5 +4,5 @@
 
 生产主路径请使用：
 - `README.md`
-- `docs/dashboard.md`
-- `docs/bot-hub-control-plane-detailed-design.md`
+- `docs/hub.md`
+- `docs/hub-control-plane-detailed-design.md`

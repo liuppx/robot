@@ -6,15 +6,15 @@ to make those boundaries explicit.
 
 ## Active product path
 
-These directories define the current Bot Hub runtime and managed robot set and should be treated as
+These directories define the current Hub runtime and managed robot set and should be treated as
 the main delivery path:
 
-- `dashboard/`: current control-plane service, static web UI, and API
+- `hub/`: current control-plane service, static web UI, and API
   implementation.
 - `robots/openclaw/`: current OpenClaw-based managed robot implementations.
 - `robots/nanobot/`: current nanobot code kept under the unified robot tree.
 - `scripts/`: bootstrap, run, stop, package, and verification entrypoints for
-  the Bot Hub stack.
+  the Hub stack.
 - `config/`: runtime configuration templates used by the active stack.
 - `docs/`: current product and runbook documentation.
 

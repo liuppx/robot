@@ -1,14 +1,14 @@
-# Bot Hub 控制平面详细设计文档
+# Hub 控制平面详细设计文档
 
 > 版本：2026-03-18  
-> 仓库：`/home/administrator/code/bot_hub`  
-> 重点对象：Rust `control-plane`（Bot 平面）+ OpenClaw 多实例编排
+> 仓库：`/home/administrator/code/hub`  
+> 重点对象：Python `control-plane`（Robot 控制面）+ OpenClaw 多实例编排
 
 ## 1. 战报结论（先看这 90 秒）
 
-Bot Hub 当前已经形成一套可运行的“机器人控制平面”：
+Hub 当前已经形成一套可运行的“机器人控制平面”：
 
-- 一个 Rust 进程统一提供 Web UI + API。
+- 一个 Python 进程统一提供 Web UI + API。
 - 一个实例 = 一套独立 OpenClaw profile + 独立端口 + 独立目录。
 - WhatsApp / DingTalk 可并行运行，实例之间互不覆盖配置。
 - 控制平面内置诊断与自动恢复（针对 WhatsApp 链路）。
@@ -41,8 +41,8 @@ Bot Hub 当前已经形成一套可运行的“机器人控制平面”：
 
 ```mermaid
 flowchart LR
-    U[Browser / Wallet] -->|HTTP + Cookie| CP[Rust Control Plane]
-    CP -->|Serve Static| WEB[web/index.html]
+    U[Browser / Wallet] -->|HTTP + Cookie| CP[Python Control Plane]
+    CP -->|Serve Static| WEB[hub/ui/index.html]
     CP -->|spawn / config| OC1[OpenClaw Gateway #1]
     CP -->|spawn / config| OC2[OpenClaw Gateway #2]
     CP -->|spawn / config| OCN[OpenClaw Gateway #N]
@@ -62,8 +62,8 @@ flowchart LR
 
 ### 3.1 分层说明
 
-1. **交互层**：`dashboard/web/index.html`，负责页面交互与轮询。
-2. **控制层**：`dashboard/src/main.rs`，负责 API、编排、状态机、自愈。
+1. **交互层**：`hub/ui/index.html`，负责页面交互与轮询。
+2. **控制层**：`hub/backend/src/control_plane/`，负责 API、编排、状态机、自愈。
 3. **执行层**：`openclaw --profile hub-xxx ...`，真正跑 channel 与 agent。
 4. **外部依赖层**：Router API、WhatsApp/DingTalk 网络、钱包扩展。
 
@@ -72,11 +72,16 @@ flowchart LR
 ## 4. 仓库关键目录（控制平面视角）
 
 ```text
-bot_hub/
-├─ dashboard/
-│  ├─ src/main.rs                  # 控制平面核心逻辑（单文件 MVP）
-│  ├─ web/index.html               # Web UI（纯静态）
-│  └─ .env.example                 # 运行环境模板
+hub/
+├─ hub/
+│  ├─ backend/
+│  │  ├─ src/control_plane/        # Python 控制面
+│  │  ├─ .env.example              # 运行环境模板
+│  │  ├─ pyproject.toml
+│  │  └─ uv.lock
+│  └─ ui/
+│     └─ index.html                # Web UI（纯静态）
+├─ robots/                         # 机器人定义与运行约定
 ├─ runtime/
 │  ├─ control-plane/state.json     # 实例状态持久化文件
 │  ├─ control-plane/logs/          # 控制平面日志
@@ -89,7 +94,7 @@ bot_hub/
 │  ├─ starter.sh                   # 标准启动/停止/重启
 │  └─ package.sh                   # 标准打包（含 tag 规则）
 └─ docs/
-   └─ bot-hub-control-plane-detailed-design.md
+   └─ hub-control-plane-detailed-design.md
 ```
 
 ---
@@ -98,21 +103,21 @@ bot_hub/
 
 ### 5.1 内存状态与持久化状态
 
-`AppState` 内包含四类关键状态：
+当前 Python 控制面内的核心状态分为几类：
 
-1. `db: DbState`：实例列表 + 默认模型（会持久化到 `state.json`）。
-2. `sessions: HashMap`：钱包会话（仅内存，进程重启会丢失）。
-3. `heal_marks: HashMap`：自动恢复冷却标记（仅内存）。
-4. `http: reqwest::Client`：调用 Router `/models`。
+1. 持久化状态：实例列表、模型配置、运行元数据，落到 `runtime/control-plane/state.json`。
+2. 运行时会话：控制面进程内的临时会话与诊断缓存。
+3. 机器人适配状态：不同机器人通过适配器接入控制面，而不是直接把业务逻辑写进控制面。
+4. 外部连接：控制面通过 HTTP 调用 Router `/models` 等上游接口。
 
 ### 5.2 配置来源
 
-`load_static_config()` 从环境变量读取：
+控制面从环境变量读取：
 
-- 服务：`BOT_HUB_BIND_ADDR`
-- 目录：`BOT_HUB_REPO_ROOT / BOT_HUB_RUNTIME_DIR / BOT_HUB_INSTANCES_ROOT`
-- 模型：`ROUTER_BASE_URL / ROUTER_API_KEY / BOT_HUB_DEFAULT_MODEL / BOT_HUB_MODEL_ALLOWLIST`
-- 安全：`BOT_HUB_ADMIN_TOKEN / BOT_HUB_INTERNAL_TOKEN`
+- 服务：`HUB_BIND_ADDR`
+- 目录：`HUB_REPO_ROOT / HUB_RUNTIME_DIR / HUB_INSTANCES_ROOT`
+- 模型：`ROUTER_BASE_URL / ROUTER_API_KEY / HUB_DEFAULT_MODEL / HUB_MODEL_ALLOWLIST`
+- 安全：`HUB_ADMIN_TOKEN / HUB_INTERNAL_TOKEN`
 - 资源：端口范围与 session TTL
 
 ### 5.3 实例隔离策略（核心）
@@ -165,31 +170,26 @@ stateDiagram-v2
 | GET | `/api/v1/public/auth/me` | Cookie | 查询登录状态 |
 | POST | `/api/v1/public/auth/wallet/connect` | 无 | 钱包登录、写会话 Cookie |
 | POST | `/api/v1/public/auth/logout` | Cookie | 登出 |
-| GET | `/api/v1/public/bot/types` | Cookie | 可创建机器人类型 |
+| GET | `/api/v1/public/robot/types` | Cookie | 可创建机器人类型 |
 | GET | `/api/v1/public/router/models` | Cookie | 拉取 Router 模型列表 |
-| GET | `/api/v1/public/bot/instances` | Cookie | 列出实例 |
-| POST | `/api/v1/public/bot/instances` | Cookie | 创建实例 |
-| GET | `/api/v1/public/bot/instances/{id}` | Cookie | 读取实例 |
-| DELETE | `/api/v1/public/bot/instances/{id}` | Cookie | 删除实例（仅 owner，且需 stopped） |
-| PATCH | `/api/v1/public/bot/instances/{id}/model` | Cookie | 修改实例模型 |
-| POST | `/api/v1/public/bot/instances/{id}/start` | Cookie | 启动实例 |
-| POST | `/api/v1/public/bot/instances/{id}/stop` | Cookie | 停止实例 |
-| POST | `/api/v1/public/bot/instances/{id}/pair-whatsapp` | Cookie | 触发 WhatsApp 配对命令 |
-| GET | `/api/v1/public/bot/instances/{id}/logs` | Cookie | 读取日志 + QR + 配对状态 |
-| GET | `/api/v1/public/bot/instances/{id}/diagnose` | Cookie | 诊断实例，支持 auto recover |
+| GET | `/api/v1/public/robot/instances` | Cookie | 列出实例 |
+| POST | `/api/v1/public/robot/instances` | Cookie | 创建实例 |
+| GET | `/api/v1/public/robot/instances/{id}` | Cookie | 读取实例 |
+| DELETE | `/api/v1/public/robot/instances/{id}` | Cookie | 删除实例（仅 owner，且需 stopped） |
+| PATCH | `/api/v1/public/robot/instances/{id}/model` | Cookie | 修改实例模型 |
+| POST | `/api/v1/public/robot/instances/{id}/start` | Cookie | 启动实例 |
+| POST | `/api/v1/public/robot/instances/{id}/stop` | Cookie | 停止实例 |
+| POST | `/api/v1/public/robot/instances/{id}/pair-whatsapp` | Cookie | 触发 WhatsApp 配对命令 |
+| GET | `/api/v1/public/robot/instances/{id}/logs` | Cookie | 读取日志 + QR + 配对状态 |
+| GET | `/api/v1/public/robot/instances/{id}/diagnose` | Cookie | 诊断实例，支持 auto recover |
 
 ### 7.2 Admin（运营/控制）
 
-| Method | Path | 鉴权 | 作用 |
-|---|---|---|---|
-| PATCH | `/api/v1/admin/router/default-model` | `x-admin-token` | 修改全局默认模型 |
-| GET | `/api/v1/admin/runtime/summary` | `x-admin-token` | 运行态汇总 |
+当前默认 Python 控制面以 `public` 路由为主，`admin/internal` 作为后续扩展位保留，不把未实现接口写成现状承诺。
 
 ### 7.3 Internal（内部探针）
 
-| Method | Path | 鉴权 | 作用 |
-|---|---|---|---|
-| POST | `/api/v1/internal/runtime/health/probe` | `x-internal-token` | 服务级内部探针 |
+当前保留扩展位，不作为默认生产能力对外承诺。
 
 ---
 
@@ -207,7 +207,7 @@ sequenceDiagram
     B->>W: yeying_ucan_session (optional)
     B->>W: yeying_ucan_sign (optional)
     B->>CP: POST /public/auth/wallet/connect
-    CP-->>B: Set-Cookie bot_hub_session=...
+    CP-->>B: Set-Cookie hub_session=...
     B->>CP: GET /public/auth/me
     CP-->>B: wallet_id/chain_id/expires_at
 ```
@@ -290,7 +290,7 @@ flowchart TD
 
 ## 10. 前端交互设计（单页控制台）
 
-前端是一个纯静态单页：`dashboard/web/index.html`。
+前端是一个纯静态单页：`hub/ui/index.html`。
 
 ### 10.1 关键行为
 
@@ -331,14 +331,14 @@ flowchart TD
 
 | Key | 用途 |
 |---|---|
-| `BOT_HUB_BIND_ADDR` | 控制平面对外地址 |
+| `HUB_BIND_ADDR` | 控制平面对外地址 |
 | `ROUTER_BASE_URL` | Router API 地址 |
 | `ROUTER_API_KEY` | Router 调用密钥 |
-| `BOT_HUB_DEFAULT_MODEL` | 新实例默认模型 |
-| `BOT_HUB_MODEL_ALLOWLIST` | 模型白名单 |
-| `BOT_HUB_ADMIN_TOKEN` | Admin 接口令牌 |
-| `BOT_HUB_INTERNAL_TOKEN` | Internal 接口令牌 |
-| `BOT_HUB_INSTANCE_PORT_START/END` | 实例端口池 |
+| `HUB_DEFAULT_MODEL` | 新实例默认模型 |
+| `HUB_MODEL_ALLOWLIST` | 模型白名单 |
+| `HUB_ADMIN_TOKEN` | Admin 接口令牌 |
+| `HUB_INTERNAL_TOKEN` | Internal 接口令牌 |
+| `HUB_INSTANCE_PORT_START/END` | 实例端口池 |
 
 ### 12.2 当前安全边界
 
@@ -377,7 +377,7 @@ flowchart TD
 `bash scripts/starter.sh [start|stop|restart]`
 
 - 默认 `start`。
-- 自动读取 `config/bot-hub.env`（或回退 `.env`）。
+- 自动读取 `config/hub.env`（或回退 `.env`）。
 - 管理 PID、日志、端口冲突检测。
 
 ### 14.2 打包脚本
@@ -392,10 +392,11 @@ flowchart TD
 ### 14.3 打包内容
 
 ```text
-build/bot-hub-control-plane
-config/bot-hub.env.template
-scripts/starter.sh
-dashboard/web/
+hub/backend/
+hub/ui/
+robots/
+config/hub.env.template
+scripts/
 VERSION / COMMIT / BUILD_SOURCE_BRANCH
 ```
 
@@ -453,7 +454,7 @@ flowchart TD
 ### 17.2 建议演进（按优先级）
 
 1. **P0**：把 `main.rs` 拆成模块（api/service/infra/domain）。
-2. **P0**：引入结构化 metrics + dashboard。
+2. **P0**：引入结构化 metrics + hub。
 3. **P1**：UCAN 服务端验签闭环。
 4. **P1**：敏感字段（如 DingTalk secret）加密落盘。
 5. **P2**：状态存储切换 SQLite/Postgres，补 migration。
@@ -475,6 +476,6 @@ flowchart TD
 
 ## 19. 结语
 
-这套 Bot Hub 控制平面，已经从“手工命令驱动”走到了“可视化编排 + 状态可观测 + 自动恢复”的工程化阶段。
+这套 Hub 控制平面，已经从“手工命令驱动”走到了“可视化编排 + 状态可观测 + 自动恢复”的工程化阶段。
 
 它最关键的价值不是某一条 API，而是把“起机器人、管机器人、救机器人”变成了**可以复制、可以培训、可以交付**的一条标准流水线。
