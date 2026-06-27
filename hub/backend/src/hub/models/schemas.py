@@ -63,10 +63,21 @@ class RobotWorkspaceSummaryResponse(BaseModel):
     recent_signals: list[dict[str, Any]]
     recent_orders: list[dict[str, Any]]
     service_log_tail: str
+    strategy_count: int = 0
+    signal_count: int = 0
+    order_count: int = 0
+    last_signal_at: str | None = None
+    last_order_at: str | None = None
+    last_run_at: str | None = None
+    last_action: str | None = None
+    last_reason: str | None = None
+    active_position_quantity: int = 0
+    strategy_snapshots: list[dict[str, Any]] = []
 
 
 class RobotWorkspaceConfigUpdateRequest(BaseModel):
     broker: str
+    strategy_id: str | None = None
     strategy: dict[str, Any]
 
 

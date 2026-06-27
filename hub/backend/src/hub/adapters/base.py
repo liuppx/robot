@@ -21,6 +21,7 @@ class RobotWorkspaceAdapter(Protocol):
         self,
         broker: str,
         strategy: dict[str, Any],
+        strategy_id: str | None = None,
     ) -> RobotWorkspaceConfigUpdateResponse: ...
 
     def run_action(self, action: str) -> RobotWorkspaceActionResponse: ...

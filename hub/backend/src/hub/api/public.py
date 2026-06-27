@@ -355,7 +355,7 @@ async def public_robot_config_update(
     if not adapter.exists():
         raise HTTPException(status_code=404, detail="robot not found")
     try:
-        return adapter.update_config(payload.broker, payload.strategy)
+        return adapter.update_config(payload.broker, payload.strategy, payload.strategy_id)
     except NotImplementedError as exc:
         raise HTTPException(status_code=405, detail=str(exc)) from exc
     except ValueError as exc:

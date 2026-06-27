@@ -19,6 +19,7 @@ async function updateRobotConfig(
   robotKey: string,
   payload: {
     broker: string
+    strategy_id?: string | null
     strategy: Record<string, unknown>
   },
 ) {
@@ -78,7 +79,7 @@ export function useRobotConfigUpdate(robotKey: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (payload: { broker: string; strategy: Record<string, unknown> }) =>
+    mutationFn: (payload: { broker: string; strategy_id?: string | null; strategy: Record<string, unknown> }) =>
       updateRobotConfig(robotKey, payload),
     onSuccess: async () => {
       await invalidateRobotWorkspace(queryClient, robotKey)

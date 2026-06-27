@@ -62,6 +62,16 @@ export type RobotWorkspaceSummary = {
   recent_signals: Array<Record<string, unknown>>
   recent_orders: Array<Record<string, unknown>>
   service_log_tail: string
+  strategy_count: number
+  signal_count: number
+  order_count: number
+  last_signal_at: string | null
+  last_order_at: string | null
+  last_run_at: string | null
+  last_action: string | null
+  last_reason: string | null
+  active_position_quantity: number
+  strategy_snapshots: Array<Record<string, unknown>>
 }
 
 export type RobotWorkspaceActionResponse = {
