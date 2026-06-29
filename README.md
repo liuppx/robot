@@ -115,10 +115,10 @@ uv run python -m uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 
 ```bash
 cd hub/frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
-访问：`http://127.0.0.1:5173/`
+访问：`http://127.0.0.1:5174/`
 
 Vite 会把 `/api` 代理到 `http://127.0.0.1:3900`。
 
@@ -129,7 +129,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:3900`。
 
 ```bash
 lsof -tiTCP:3900 -sTCP:LISTEN | xargs kill
-lsof -tiTCP:5173 -sTCP:LISTEN | xargs kill
+lsof -tiTCP:5174 -sTCP:LISTEN | xargs kill
 ```
 
 ### 5. 快速测试

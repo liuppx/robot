@@ -16,17 +16,17 @@ uv run python -m uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 
 ```bash
 cd hub/frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
-访问：`http://127.0.0.1:5173/`
+访问：`http://127.0.0.1:5174/`
 
 Vite 开发服务器会把 `/api` 代理到 `http://127.0.0.1:3900`。
 
 停止：在运行 frontend 的终端里按 `Ctrl+C`。如果端口被旧进程占用，可执行：
 
 ```bash
-lsof -tiTCP:5173 -sTCP:LISTEN | xargs kill
+lsof -tiTCP:5174 -sTCP:LISTEN | xargs kill
 ```
 
 ## 构建

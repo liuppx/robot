@@ -88,7 +88,7 @@ uv run python -m uvicorn hub.app:create_app --factory --reload --host 127.0.0.1 
 ```bash
 cd hub/frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
 前端开发服务器会把 `/api` 代理到 `http://127.0.0.1:3900`。
@@ -100,7 +100,7 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 ```bash
 lsof -tiTCP:3900 -sTCP:LISTEN | xargs kill
-lsof -tiTCP:5173 -sTCP:LISTEN | xargs kill
+lsof -tiTCP:5174 -sTCP:LISTEN | xargs kill
 ```
 
 打包或部署后的生命周期操作统一使用 `scripts/starter.sh`。
